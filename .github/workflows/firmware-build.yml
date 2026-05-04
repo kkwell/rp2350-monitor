@@ -54,5 +54,5 @@ jobs:
           path: |
             build/rp2350_monitor.uf2
             build/rp2350_monitor.elf
-            build/rp2350_monitor.map
+            build/rp2350_monitor.elf.map
           if-no-files-found: error

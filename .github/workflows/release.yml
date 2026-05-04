@@ -81,7 +81,7 @@ jobs:
           mkdir -p dist
           cp build/rp2350_monitor.uf2 "dist/rp2350_monitor-${{ steps.version.outputs.version }}.uf2"
           cp build/rp2350_monitor.elf "dist/rp2350_monitor-${{ steps.version.outputs.version }}.elf"
-          cp build/rp2350_monitor.map "dist/rp2350_monitor-${{ steps.version.outputs.version }}.map"
+          cp build/rp2350_monitor.elf.map "dist/rp2350_monitor-${{ steps.version.outputs.version }}.map"
           cp build/size.txt "dist/rp2350_monitor-${{ steps.version.outputs.version }}-size.txt"
           sha256sum dist/* > "dist/rp2350_monitor-${{ steps.version.outputs.version }}-sha256.txt"
 
