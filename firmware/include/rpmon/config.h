@@ -17,6 +17,7 @@ constexpr size_t kMaxPayloadBytes = 128;
 constexpr size_t kMaxWifiProfiles = 3;
 constexpr size_t kMaxWifiScanResults = 8;
 constexpr size_t kEventQueueCapacity = 128;
+constexpr size_t kChannelEventQueueCapacity = 16;
 constexpr size_t kEventLineMax = 512;
 constexpr size_t kEventReplayMax = 64;
 

@@ -2,15 +2,15 @@
 
 This firmware treats hardware protocol traffic as product data, not debug text.
 UART, SPI, I2C, GPIO, and future protocol drivers publish normalized JSON events into
-one shared telemetry path.
+the same live telemetry path plus per-channel replay buffers.
 
 ## Memory Budget
 
 Current measured firmware size:
 
 ```text
-text 478312 bytes
-bss  189788 bytes
+text 480232 bytes
+bss  270652 bytes
 ```
 
 `text` lives in flash. `bss` is static SRAM and includes lwIP buffers, device
@@ -22,15 +22,19 @@ The data path avoids heap allocation. Buffers are fixed-size and bounded at
 compile time:
 
 - Event queue: `kEventQueueCapacity = 128` JSON lines.
+- Per-channel data queue: `kChannelEventQueueCapacity = 16` JSON lines per
+  channel slot.
 - Event line size: `kEventLineMax = 512` bytes.
 - Hardware payload per event chunk: `kMaxPayloadBytes = 128` bytes.
 - Replay response limit: `kEventReplayMax = 64` events per request.
 
-## Event Queue
+## Event Queues
 
-All status and protocol data events are copied into an in-memory ring queue
-before being sent to USB/TCP live sinks. The queue keeps the latest events even
-when no host is connected or when a live sink cannot accept data immediately.
+All status and protocol data events are copied into a global in-memory ring
+queue before being sent to USB/TCP live sinks. Protocol data events are also
+copied into a per-channel ring queue. The global queue keeps the latest unified
+timeline; the per-channel queues keep recent data for each channel even if a
+burst from another channel advances the global queue.
 
 Protocol data event shape:
 
@@ -43,9 +47,10 @@ large publish is split into multiple 128-byte chunks.
 
 ## Overflow Behavior
 
-The queue is intentionally bounded. If producers exceed host drain speed long
-enough to fill the queue, the oldest event is dropped and the newest event is
-accepted. The firmware records:
+The queues are intentionally bounded. If producers exceed host drain speed long
+enough to fill a queue, the oldest event in that queue is dropped and the newest
+event is accepted. The firmware records global counters and per-channel
+counters:
 
 - `buffers.dropped_events`
 - `buffers.dropped_bytes`
@@ -53,6 +58,9 @@ accepted. The firmware records:
 - `buffers.event_max_depth`
 - `buffers.oldest_seq`
 - `buffers.newest_seq`
+- `buffers.channels[n].dropped_events`
+- `buffers.channels[n].dropped_bytes`
+- `buffers.channels[n].depth`
 
 The first overflow and then every 16 additional drops produce a warning status
 event:
@@ -77,13 +85,15 @@ events:
 
 ```sh
 python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX events_read --count 64 --since-seq 120
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX events_read --channel 4 --count 16
 ```
 
-`events_read` streams buffered status/event lines first, then returns a command
-response:
+Global `events_read` streams buffered status/event lines first, then returns a
+command response. Channel-scoped `events_read --channel N` streams only data
+events from channel `N`'s isolated queue.
 
 ```json
-{"type":"resp","ok":true,"cmd":"events_read","msg":"events replayed","sent":12,"max":64,"since_seq":120}
+{"type":"resp","ok":true,"cmd":"events_read","msg":"events replayed","sent":12,"max":64,"since_seq":120,"channel":-1}
 ```
 
 Buffer health can be polled explicitly:
@@ -101,7 +111,8 @@ python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX buffer_status
 - TCP client absent or slow: live TCP sends may fail without blocking hardware
   polling; the ring remains available for replay.
 - Queue full: oldest events are dropped, counters increase, warning status is
-  emitted.
+  emitted for global overflow. Per-channel drops are reported in
+  `buffers.channels`.
 - Oversized data publish: data is split into bounded chunks with `offset`.
 - GPIO input changes, reads, and writes are normalized as one-byte data events.
 - Invalid command payloads: command responses return `ok:false` with a clear
@@ -117,6 +128,7 @@ For high-speed or continuous passive sniffing, the host software should:
 2. Write every line to disk before doing expensive analysis.
 3. Watch `buffers.dropped_events`; any non-zero delta means the capture has a
    gap.
-4. Use `events_read --since-seq` after reconnects.
-5. Keep protocol-specific decoders outside the firmware; the firmware provides
+4. Watch `buffers.channels[n].dropped_events` for channel-local gaps.
+5. Use `events_read --since-seq` and `events_read --channel N` after reconnects.
+6. Keep protocol-specific decoders outside the firmware; the firmware provides
    timestamped byte events and reliable health metadata.

@@ -12,7 +12,8 @@ Current version:
 - Native UART, SPI, I2C, and GPIO channel layers
 - CAN reserved behind a driver interface
 - Host CLI that emits newline-delimited JSON for AI/tooling analysis
-- Bounded in-firmware event buffering with overflow counters and replay
+- Bounded global and per-channel event buffering with overflow counters and replay
+- GitHub Actions CI/release workflows for reproducible UF2 builds
 
 Bluetooth is intentionally not included in this version.
 
@@ -79,6 +80,7 @@ Inspect and replay buffered firmware events:
 ```sh
 python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX buffer_status
 python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX events_read --count 64
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX events_read --channel 4 --count 16
 ```
 
 UART0 internal loopback test through the control interface:
@@ -127,4 +129,12 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 monitor
 
 Control messages are newline-delimited JSON. Responses and captured protocol events are also newline-delimited JSON, which keeps the host side easy to pipe into scripts or models.
 
-See [docs/control_protocol.md](docs/control_protocol.md) for the host control protocol, [docs/reliability.md](docs/reliability.md) for buffering and failure handling, and [docs/architecture.md](docs/architecture.md) for the firmware layering and extension points.
+See [docs/control_protocol.md](docs/control_protocol.md) for the host control protocol, [docs/resource_limits.md](docs/resource_limits.md) for concurrent hardware limits, [docs/reliability.md](docs/reliability.md) for buffering and failure handling, and [docs/architecture.md](docs/architecture.md) for the firmware layering and extension points.
+
+## Release Builds
+
+GitHub Actions builds the firmware on every push and pull request. Pushes to
+`main` also run the release workflow: it reads `RPMON_FW_VERSION` from
+`CMakeLists.txt`, builds with Pico SDK `2.2.0`, and creates a GitHub release
+with UF2/ELF/MAP/size/checksum assets when tag `v<version>` does not already
+exist. Bump `RPMON_FW_VERSION` before merging a new release.

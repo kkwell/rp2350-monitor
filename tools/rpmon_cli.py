@@ -270,6 +270,8 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
         payload = {"cmd": cmd, "count": args.count}
         if args.since_seq is not None:
             payload["since_seq"] = args.since_seq
+        if args.channel is not None:
+            payload["channel"] = args.channel
         return payload
     if cmd == "wifi_connect":
         payload: Dict[str, Any] = {"cmd": cmd}
@@ -389,6 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     events_read = sub.add_parser("events_read")
     events_read.add_argument("--count", type=int, default=16)
     events_read.add_argument("--since-seq", type=int)
+    events_read.add_argument("--channel", type=int)
 
     wifi_connect = sub.add_parser("wifi_connect")
     wifi_connect.add_argument("--slot", type=int, choices=range(3))

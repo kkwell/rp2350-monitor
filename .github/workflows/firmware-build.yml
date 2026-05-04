@@ -1,0 +1,58 @@
+name: Firmware Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Pico 2 W firmware
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout firmware
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            libstdc++-arm-none-eabi-newlib \
+            libusb-1.0-0-dev \
+            ninja-build \
+            pkg-config \
+            python3
+
+      - name: Checkout Pico SDK
+        run: |
+          git clone --branch 2.2.0 --depth 1 https://github.com/raspberrypi/pico-sdk.git "$RUNNER_TEMP/pico-sdk"
+          git -C "$RUNNER_TEMP/pico-sdk" submodule update --init --recursive --depth 1
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DPICO_BOARD=pico2_w \
+            -DPICO_SDK_PATH="$RUNNER_TEMP/pico-sdk"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Size report
+        run: arm-none-eabi-size build/rp2350_monitor.elf
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rp2350-monitor-firmware
+          path: |
+            build/rp2350_monitor.uf2
+            build/rp2350_monitor.elf
+            build/rp2350_monitor.map
+          if-no-files-found: error

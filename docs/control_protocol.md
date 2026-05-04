@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.2.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.3.0","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -121,6 +121,7 @@ The response includes a `buffers` object with telemetry queue health:
 {
   "buffers": {
     "event_capacity": 128,
+    "channel_event_capacity": 16,
     "event_line_max": 512,
     "event_depth": 7,
     "event_max_depth": 7,
@@ -131,7 +132,10 @@ The response includes a `buffers` object with telemetry queue health:
     "data_bytes": 28,
     "dropped_events": 0,
     "dropped_bytes": 0,
-    "overflow_notices": 0
+    "overflow_notices": 0,
+    "channels": [
+      {"id":4,"depth":3,"max_depth":3,"oldest_seq":12,"newest_seq":20,"dropped_events":0,"dropped_bytes":0}
+    ]
   }
 }
 ```
@@ -143,10 +147,12 @@ The response includes a `buffers` object with telemetry queue health:
 ```
 
 `events_read` replays recent buffered status/event lines, then returns a command
-response. `count` is capped at 64. `since_seq` is optional.
+response. `count` is capped at 64. `since_seq` is optional. `channel` is
+optional; when present, replay comes from that channel's isolated data queue.
 
 ```json
 {"cmd":"events_read","count":64,"since_seq":120}
+{"cmd":"events_read","channel":4,"count":16}
 ```
 
 `pins` returns exposed GPIO ownership.
@@ -181,6 +187,11 @@ channel, and releases its pins for reuse.
 ```json
 {"cmd":"channel_release","id":4}
 ```
+
+Concurrent channel limits are enforced during `channel_config`. The firmware
+rejects duplicate native instances, invalid alternate-function pin mappings,
+already-owned GPIOs, and channel-table overflow with `ok:false` responses. See
+[resource_limits.md](resource_limits.md) for the exact limits and messages.
 
 ## UART
 
@@ -296,6 +307,7 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 wifi_set --slot 0 --ssid ChinaNet-3
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 wifi_clear --slot 1
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 buffer_status
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 events_read --count 64
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 events_read --channel 4 --count 16
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 uart_loopback_test --id 7 --stop
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_spi --id 2 --instance 0 --sck 2 --mosi 3 --miso 0 --cs 1
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 spi_xfer --id 2 --hex 9f000000

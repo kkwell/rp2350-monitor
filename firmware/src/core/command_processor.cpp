@@ -57,8 +57,8 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     if (std::strcmp(cmd, "status") == 0) {
         static char wifi[1800];
         static char channels[1600];
-        char buffers[420];
-        static char extra[3900];
+        char buffers[1800];
+        static char extra[5600];
         wifi_.status_json(wifi, sizeof(wifi));
         channels_.list_json(channels, sizeof(channels));
         events_.stats_json(buffers, sizeof(buffers));
@@ -67,15 +67,17 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         return;
     }
     if (std::strcmp(cmd, "buffer_status") == 0) {
-        char buffers[420];
+        char buffers[1800];
         events_.stats_json(buffers, sizeof(buffers));
         events_.publish_response(reply, true, cmd, "ok", buffers);
         return;
     }
     if (std::strcmp(cmd, "events_read") == 0) {
         int count = 16;
+        int channel = -1;
         uint32_t since_seq = 0;
         json_get_int(line, "count", count);
+        json_get_int(line, "channel", channel);
         json_get_uint32(line, "since_seq", since_seq);
         if (count <= 0) {
             count = 16;
@@ -83,12 +85,13 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         if (count > static_cast<int>(kEventReplayMax)) {
             count = static_cast<int>(kEventReplayMax);
         }
-        size_t sent = events_.replay_buffered(reply, static_cast<size_t>(count), since_seq);
+        size_t sent = events_.replay_buffered(reply, static_cast<size_t>(count), since_seq, channel);
         char extra[128];
-        snprintf(extra, sizeof(extra), "\"sent\":%u,\"max\":%u,\"since_seq\":%lu",
+        snprintf(extra, sizeof(extra), "\"sent\":%u,\"max\":%u,\"since_seq\":%lu,\"channel\":%d",
                  static_cast<unsigned>(sent),
                  static_cast<unsigned>(count),
-                 static_cast<unsigned long>(since_seq));
+                 static_cast<unsigned long>(since_seq),
+                 channel);
         events_.publish_response(reply, true, cmd, "events replayed", extra);
         return;
     }

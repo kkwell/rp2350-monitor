@@ -97,6 +97,7 @@ bool ChannelManager::release(int id, char *err, size_t err_len) {
         driver->stop();
     }
     pins_.release_channel(id);
+    events_.release_channel(id);
     *slot = Slot{};
     return true;
 }

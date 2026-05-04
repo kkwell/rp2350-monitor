@@ -60,15 +60,17 @@ suitable for scripts, logs, and AI-assisted analysis.
 
 ## Buffering Policy
 
-`EventBus` owns a fixed telemetry ring in static SRAM. All protocol data and
-status events enter this queue before USB/TCP live fan-out. If a host is absent
-or slow, recent events remain replayable through `events_read`. If the queue
-fills, the oldest event is dropped, `buffers.dropped_events` and
-`buffers.dropped_bytes` are incremented, and warning status events are emitted.
+`EventBus` owns a fixed global telemetry ring plus fixed per-channel data rings
+in static SRAM. All protocol data and status events enter the global queue
+before USB/TCP live fan-out; data events also enter their channel queue. If a
+host is absent or slow, recent events remain replayable through `events_read`.
+If a queue fills, the oldest event in that queue is dropped and the corresponding
+drop counters are incremented.
 
 Current constants:
 
 - `kEventQueueCapacity = 128`
+- `kChannelEventQueueCapacity = 16`
 - `kEventLineMax = 512`
 - `kMaxPayloadBytes = 128`
 - `kEventReplayMax = 64`
