@@ -20,6 +20,8 @@ constexpr size_t kEventQueueCapacity = 128;
 constexpr size_t kChannelEventQueueCapacity = 16;
 constexpr size_t kEventLineMax = 512;
 constexpr size_t kEventReplayMax = 64;
+constexpr size_t kLogicCaptureWords = 32768;
+constexpr size_t kLogicUploadChunkBytes = 512;
 
 enum class ProtocolType : uint8_t {
     Uart,
@@ -27,6 +29,7 @@ enum class ProtocolType : uint8_t {
     I2c,
     Can,
     Gpio,
+    Logic,
     Unknown
 };
 

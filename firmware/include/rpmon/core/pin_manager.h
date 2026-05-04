@@ -17,7 +17,8 @@ enum class PinRole : uint8_t {
     I2cScl,
     CanTx,
     CanRx,
-    Gpio
+    Gpio,
+    Logic
 };
 
 class PinManager {

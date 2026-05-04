@@ -9,8 +9,8 @@ the same live telemetry path plus per-channel replay buffers.
 Current measured firmware size:
 
 ```text
-text 480232 bytes
-bss  270652 bytes
+text 486144 bytes
+bss  402592 bytes
 ```
 
 `text` lives in flash. `bss` is static SRAM and includes lwIP buffers, device
@@ -27,6 +27,10 @@ compile time:
 - Event line size: `kEventLineMax = 512` bytes.
 - Hardware payload per event chunk: `kMaxPayloadBytes = 128` bytes.
 - Replay response limit: `kEventReplayMax = 64` events per request.
+- Logic analyzer capture buffer: `kLogicCaptureWords = 32768`, or 131,072
+  bytes of static SRAM.
+- Logic analyzer upload chunk: `kLogicUploadChunkBytes = 512` bytes per JSON
+  bulk line before hex expansion.
 
 ## Event Queues
 
@@ -104,6 +108,27 @@ python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX buffer_status
 
 `status` and HTTP `GET /api/status` also include the same `buffers` object.
 
+## High-Speed Capture Path
+
+The logic analyzer path is intentionally separate from the event queues. PIO2
+samples a contiguous GPIO group at the requested fixed rate, DMA copies packed
+32-bit words into the static capture buffer, and the firmware releases the PIO
+state machine and DMA channel when the capture completes. The host then uses
+`logic_read` to upload the frozen buffer over USB CDC or Wi-Fi TCP.
+
+This design gives high-speed digital input a deterministic memory ceiling and
+prevents large captures from overwriting recent UART/SPI/I2C/GPIO events. It is
+a capture-then-upload instrument in this version, not an unbounded live stream.
+
+Logic analyzer status is available through `status`, HTTP `GET /api/status`,
+and `logic_status`. Important fields:
+
+- `logic.running`: DMA capture is still active.
+- `logic.complete`: data is ready for `logic_read`.
+- `logic.words`: captured 32-bit word count.
+- `logic.buffer_words_max` / `logic.buffer_bytes`: fixed SRAM capacity.
+- `logic.record_bits`: number of valid packed bits per 32-bit word.
+
 ## Failure Cases
 
 - USB disconnected: live USB sends are skipped, but events remain in the ring
@@ -115,6 +140,10 @@ python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX buffer_status
   `buffers.channels`.
 - Oversized data publish: data is split into bounded chunks with `offset`.
 - GPIO input changes, reads, and writes are normalized as one-byte data events.
+- Oversized logic analyzer request: rejected before capture starts, with the
+  required word count and maximum word count in the response.
+- Logic analyzer runtime resource conflict: `logic_start` fails if PIO2 or DMA
+  cannot be claimed; already claimed GPIOs are rejected during `logic_config`.
 - Invalid command payloads: command responses return `ok:false` with a clear
   `msg`; they are not added to the telemetry queue.
 - Wi-Fi connection failure: AP recovery is started and per-profile
@@ -132,3 +161,10 @@ For high-speed or continuous passive sniffing, the host software should:
 5. Use `events_read --since-seq` and `events_read --channel N` after reconnects.
 6. Keep protocol-specific decoders outside the firmware; the firmware provides
    timestamped byte events and reliable health metadata.
+
+For high-speed logic captures, host software should:
+
+1. Call `logic_status` until `complete:true`.
+2. Use `logic_read --count-words 0` or page by `offset_words`.
+3. Store every `type:"logic"` JSON line before decoding.
+4. Treat a new `logic_start` as destructive to the previous capture buffer.

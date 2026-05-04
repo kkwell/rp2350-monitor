@@ -81,8 +81,8 @@ void append_html(char *out, size_t out_len, size_t &pos, const char *fmt, ...) {
 
 } // namespace
 
-HttpServer::HttpServer(WifiManager &wifi, ChannelManager &channels, EventBus &events, uint16_t port)
-    : wifi_(wifi), channels_(channels), events_(events), port_(port) {}
+HttpServer::HttpServer(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, EventBus &events, uint16_t port)
+    : wifi_(wifi), channels_(channels), logic_(logic), events_(events), port_(port) {}
 
 bool HttpServer::start() {
     cyw43_arch_lwip_begin();
@@ -465,16 +465,19 @@ void HttpServer::send_response(Client &client, int code, const char *reason, con
 void HttpServer::build_status_json(char *out, size_t out_len) const {
     static char wifi[1800];
     static char channels[1600];
+    char logic[420];
     char buffers[1800];
     wifi_.status_json(wifi, sizeof(wifi));
     channels_.list_json(channels, sizeof(channels));
+    logic_.status_json(logic, sizeof(logic));
     events_.stats_json(buffers, sizeof(buffers));
     std::snprintf(out, out_len,
-                  "{\"type\":\"status\",\"version\":\"%s\",\"http_port\":%u,%s,%s,%s}",
+                  "{\"type\":\"status\",\"version\":\"%s\",\"http_port\":%u,%s,%s,%s,%s}",
                   kFirmwareVersion,
                   static_cast<unsigned>(port_),
                   wifi,
                   channels,
+                  logic,
                   buffers);
 }
 

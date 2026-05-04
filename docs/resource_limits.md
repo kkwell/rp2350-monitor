@@ -12,11 +12,18 @@ Pico 2 W / RP2350 exposes these native protocol blocks to the firmware:
 - SPI: 2 instances, `instance:0` and `instance:1`.
 - I2C: 2 instances, `instance:0` and `instance:1`.
 - GPIO: exposed header pins `0..22` and `26..28`.
+- High-speed logic analyzer: one active PIO2/DMA capture engine, using one PIO
+  state machine, one DMA channel, and a dedicated 32,768-word SRAM buffer.
 - CAN: reserved in the protocol model, not implemented in this firmware version.
 
 The channel table has `kMaxChannels = 8` slots. A valid concurrent setup can mix
 UART, SPI, I2C, and GPIO channels up to that table size, subject to native
 peripheral and pin ownership limits.
+
+The logic analyzer is outside the eight-channel table because it is a bulk
+capture instrument, not a byte-stream protocol channel. It still uses the same
+pin ownership rules, so a GPIO cannot be used by UART/SPI/I2C/GPIO and logic
+capture at the same time.
 
 ## Rejection Cases
 
@@ -33,6 +40,12 @@ firmware limits:
 - `type:"can"` currently returns a reserved-driver error.
 - I2C transfers to a non-responding address return an explicit bus error, for
   example `I2C write failed: -1`.
+- Logic analyzer captures that do not fit SRAM return a message such as
+  `logic capture requires 65536 words, max is 32768`.
+- Logic analyzer pin ranges must be contiguous exposed GPIOs and cannot overlap
+  other channel ownership.
+- If the PIO2 state machine, PIO instruction memory, or a DMA channel cannot be
+  claimed, `logic_start` returns `ok:false` with the specific resource name.
 
 Use the `pins` command to inspect current pin ownership and `channels` to inspect
 configured protocol instances. Use `release --id N` to remove a channel and free
@@ -51,6 +64,18 @@ Protocol data is buffered in two layers:
 `events_read --channel N` replays the per-channel data queue for channel `N`.
 Without `--channel`, `events_read` replays the global queue.
 
+High-speed logic analyzer captures use a separate fixed buffer:
+
+- `kLogicCaptureWords = 32768`.
+- Buffer size is 131,072 bytes.
+- Upload chunks are capped at `kLogicUploadChunkBytes = 512`.
+- Bulk `type:"logic"` lines are sent over the same USB CDC or Wi-Fi TCP link as
+  other JSON lines, but they are not copied into the telemetry event queues.
+
+This keeps high-speed captures from evicting ordinary UART/SPI/I2C/GPIO event
+history. It also means hosts must finish `logic_read` and store the resulting
+JSONL if they need the full capture after another `logic_start`.
+
 The firmware still cannot overcome physical bandwidth limits. Hosts should keep
 USB or TCP reads active and write JSONL to disk when capturing sustained traffic.
 Any non-zero `dropped_events` or per-channel `dropped_events` means the capture
@@ -62,3 +87,5 @@ has a gap and the host should mark the analysis as incomplete.
 - SPI and I2C are host-initiated transaction engines in this version. Passive
   bus sniffing is reserved for future PIO drivers.
 - GPIO supports input sampling, output control, and input-change events.
+- Logic analyzer supports triggered fixed-rate sampling of multiple contiguous
+  GPIOs into SRAM, followed by USB/TCP upload.

@@ -21,6 +21,7 @@ main
 ├── core
 │   ├── command_processor    JSON command dispatch
 │   ├── channel_manager      channel lifecycle
+│   ├── logic_analyzer       PIO2/DMA high-speed GPIO capture
 │   ├── pin_manager          pin ownership and mux validation
 │   ├── config_store         persisted Wi-Fi profiles
 │   └── event_bus            bounded event buffering and fan-out
@@ -77,6 +78,29 @@ Current constants:
 
 The measured static SRAM allocation is documented in
 [reliability.md](reliability.md).
+
+## High-Speed Logic Capture Path
+
+The logic analyzer is a separate instrument path for high-speed GPIO input. It
+uses the same command transports and pin ownership system, but it does not use
+the normal protocol channel table or event queues for bulk data.
+
+Flow:
+
+1. `logic_config` validates a contiguous exposed GPIO range and claims those
+   pins through `PinManager`.
+2. `logic_start` claims one PIO2 state machine and one DMA channel.
+3. PIO executes a single `in pins, n` instruction at the requested sample rate
+   and autopushes packed samples into the RX FIFO.
+4. DMA copies RX FIFO words into the fixed SRAM capture buffer.
+5. Completion is reported as a status event; runtime PIO/DMA resources are
+   released while the capture buffer stays available.
+6. `logic_read` uploads `type:"logic"` JSONL chunks over the active USB or TCP
+   transport.
+
+The implementation follows the same design pattern as Raspberry Pi's
+`pico-examples/pio/logic_analyser` example: PIO handles deterministic sampling,
+DMA handles high-speed memory movement, and the CPU handles control and upload.
 
 ## Protocol Channel Contract
 
@@ -141,8 +165,10 @@ CAN options:
 
 PIO options:
 
-- Passive SPI/I2C sniffers.
+- Passive SPI/I2C sniffers that decode into normal `EventBus` events.
 - Custom single-wire or timing-sensitive protocol capture.
 - Triggered GPIO edge capture with timestamped events.
+- Larger continuous capture modes using chained DMA buffers or external host
+  backpressure once the required transport throughput is defined.
 
 When adding PIO engines, keep them under a separate driver module and feed normalized events through `EventBus`.

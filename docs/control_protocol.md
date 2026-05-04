@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.3.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.4.0","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -39,6 +39,12 @@ Protocol data event:
 
 ```json
 {"type":"event","seq":12,"ts_us":1234567,"channel":1,"proto":"uart","dir":"rx","len":3,"offset":0,"hex":"010203"}
+```
+
+Logic analyzer bulk data line:
+
+```json
+{"type":"logic","capture_id":1,"offset_words":0,"words":128,"pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"record_bits":32,"encoding":"u32-le-packed","hex":"00000000"}
 ```
 
 `hex` is lowercase/uppercase insensitive on input. Output is contiguous
@@ -167,6 +173,31 @@ optional; when present, replay comes from that channel's isolated data queue.
 {"cmd":"channels"}
 ```
 
+The `status` response also includes a `logic` object for the high-speed PIO
+capture engine:
+
+```json
+{
+  "logic": {
+    "configured": true,
+    "running": false,
+    "complete": true,
+    "capture_id": 3,
+    "pin_base": 16,
+    "pin_count": 4,
+    "sample_rate": 10000000,
+    "samples": 1024,
+    "words": 128,
+    "record_bits": 32,
+    "trigger_pin": -1,
+    "trigger_level": true,
+    "buffer_words_max": 32768,
+    "buffer_bytes": 131072,
+    "chunk_bytes": 512
+  }
+}
+```
+
 ## Channel Lifecycle
 
 Every hardware protocol uses this sequence:
@@ -288,6 +319,59 @@ Example event:
 {"type":"event","seq":31,"ts_us":1234567,"channel":4,"proto":"gpio","dir":"write","len":1,"offset":0,"hex":"01"}
 ```
 
+## High-Speed Logic Analyzer
+
+The logic analyzer is a separate PIO/DMA capture engine for oscilloscope-style
+multi-pin digital sampling. It is not a normal `channel_config` driver because
+bulk captures use a dedicated SRAM buffer and are uploaded in larger chunks.
+
+Configure a capture:
+
+```json
+{"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024}
+```
+
+Optional trigger:
+
+```json
+{"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"trigger_pin":16,"trigger_level":true}
+```
+
+Start and poll status:
+
+```json
+{"cmd":"logic_start"}
+{"cmd":"logic_status"}
+```
+
+Read captured words. `count_words:0` means "read to the end". The firmware
+sends one or more `type:"logic"` data lines, then a normal command response.
+
+```json
+{"cmd":"logic_read","offset_words":0,"count_words":0}
+```
+
+Release pins and runtime configuration:
+
+```json
+{"cmd":"logic_release"}
+```
+
+Data encoding:
+
+- Pins must be a contiguous exposed GPIO range starting at `pin_base`.
+- Each sample records `pin_count` bits.
+- `record_bits = 32 - (32 % pin_count)`.
+- The hex payload is little-endian `uint32_t` words copied from the capture
+  buffer.
+- To decode a pin level, use relative pin index `pin = gpio - pin_base`,
+  `bit_index = pin + sample * pin_count`, `word_index = bit_index / record_bits`,
+  and bit mask `1u << ((bit_index % record_bits) + 32 - record_bits)`.
+
+The first version captures into RAM first and then uploads over USB or TCP. It
+does not provide infinite streaming at the configured sample rate; sustained
+capture length is bounded by `buffer_words_max`.
+
 ## CAN Reservation
 
 The command parser accepts `type:"can"` as a reserved protocol name, but the
@@ -317,6 +401,11 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_gpio --id 4 --gpio 16 --dire
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_write --id 4 --level 1
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_read --id 4
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 release --id 4
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_config --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 1024
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_start
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_status
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_read --offset-words 0 --count-words 0
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_release
 ```
 
 External tools should follow the same rule: do not scrape human text; consume

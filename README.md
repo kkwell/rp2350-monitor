@@ -10,6 +10,7 @@ Current version:
 - USB CDC backup control/data channel
 - Pico-hosted setup AP: `RP2350-Monitor-xxxxxx`, password `rpmon2350`, IP `192.168.4.1`
 - Native UART, SPI, I2C, and GPIO channel layers
+- PIO2/DMA high-speed logic analyzer for contiguous GPIO capture
 - CAN reserved behind a driver interface
 - Host CLI that emits newline-delimited JSON for AI/tooling analysis
 - Bounded global and per-channel event buffering with overflow counters and replay
@@ -124,6 +125,19 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 start --id 5
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_read --id 5
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 monitor
 ```
+
+High-speed logic capture on GPIO16..GPIO19:
+
+```sh
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_config --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 1024
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_start
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_status
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 --log logic_capture.jsonl logic_read --offset-words 0 --count-words 0
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_release
+```
+
+The logic analyzer captures into a fixed 131,072-byte SRAM buffer first, then
+uploads `type:"logic"` JSONL chunks over the same USB or TCP control link.
 
 ## Protocol
 

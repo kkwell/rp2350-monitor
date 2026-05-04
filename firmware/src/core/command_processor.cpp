@@ -38,8 +38,8 @@ bool read_boolish(const char *line, const char *key, bool &out) {
 
 } // namespace
 
-CommandProcessor::CommandProcessor(WifiManager &wifi, ChannelManager &channels, PinManager &pins, EventBus &events)
-    : wifi_(wifi), channels_(channels), pins_(pins), events_(events) {}
+CommandProcessor::CommandProcessor(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, PinManager &pins, EventBus &events)
+    : wifi_(wifi), channels_(channels), logic_(logic), pins_(pins), events_(events) {}
 
 void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     char cmd[40];
@@ -58,11 +58,13 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         static char wifi[1800];
         static char channels[1600];
         char buffers[1800];
-        static char extra[5600];
+        char logic[420];
+        static char extra[6400];
         wifi_.status_json(wifi, sizeof(wifi));
         channels_.list_json(channels, sizeof(channels));
+        logic_.status_json(logic, sizeof(logic));
         events_.stats_json(buffers, sizeof(buffers));
-        snprintf(extra, sizeof(extra), "%s,%s,%s", wifi, channels, buffers);
+        snprintf(extra, sizeof(extra), "%s,%s,%s,%s", wifi, channels, logic, buffers);
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;
     }
@@ -173,6 +175,12 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     }
     if (std::strcmp(cmd, "gpio_read") == 0 || std::strcmp(cmd, "gpio_write") == 0) {
         handle_gpio_io(line, reply, cmd);
+        return;
+    }
+    if (std::strcmp(cmd, "logic_config") == 0 || std::strcmp(cmd, "logic_start") == 0 ||
+        std::strcmp(cmd, "logic_stop") == 0 || std::strcmp(cmd, "logic_release") == 0 ||
+        std::strcmp(cmd, "logic_status") == 0 || std::strcmp(cmd, "logic_read") == 0) {
+        handle_logic_io(line, reply, cmd);
         return;
     }
     if (std::strcmp(cmd, "channels") == 0) {
@@ -338,6 +346,82 @@ void CommandProcessor::handle_gpio_io(const char *line, LineSink &reply, const c
     char extra[24];
     snprintf(extra, sizeof(extra), "\"level\":%s", level ? "true" : "false");
     events_.publish_response(reply, ok, cmd, ok ? "gpio level read" : err, ok ? extra : nullptr);
+}
+
+void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const char *cmd) {
+    char err[160] = {};
+    bool ok = false;
+    if (std::strcmp(cmd, "logic_config") == 0) {
+        int pin_base = -1;
+        int pin_count = 0;
+        int trigger_pin = -1;
+        uint32_t sample_rate = 1000000;
+        uint32_t samples = 1024;
+        bool trigger_level = true;
+        if (!json_get_int(line, "pin_base", pin_base)) {
+            json_get_int(line, "base", pin_base);
+        }
+        if (!json_get_int(line, "pin_count", pin_count)) {
+            json_get_int(line, "count", pin_count);
+        }
+        json_get_uint32(line, "sample_rate", sample_rate);
+        json_get_uint32(line, "rate", sample_rate);
+        json_get_uint32(line, "samples", samples);
+        json_get_int(line, "trigger_pin", trigger_pin);
+        read_boolish(line, "trigger_level", trigger_level);
+        if (pin_base < 0 || pin_count <= 0) {
+            events_.publish_response(reply, false, cmd, "missing pin_base or pin_count");
+            return;
+        }
+        ok = logic_.configure(static_cast<uint8_t>(pin_base),
+                              static_cast<uint8_t>(pin_count),
+                              sample_rate,
+                              samples,
+                              trigger_pin,
+                              trigger_level,
+                              err,
+                              sizeof(err));
+        char extra[420];
+        logic_.status_json(extra, sizeof(extra));
+        events_.publish_response(reply, ok, cmd, ok ? "logic configured" : err, ok ? extra : nullptr);
+        return;
+    }
+    if (std::strcmp(cmd, "logic_start") == 0) {
+        ok = logic_.start(err, sizeof(err));
+        events_.publish_response(reply, ok, cmd, ok ? "logic capture armed" : err);
+        return;
+    }
+    if (std::strcmp(cmd, "logic_stop") == 0) {
+        ok = logic_.stop(err, sizeof(err));
+        events_.publish_response(reply, ok, cmd, ok ? "logic capture stopped" : err);
+        return;
+    }
+    if (std::strcmp(cmd, "logic_release") == 0) {
+        ok = logic_.release(err, sizeof(err));
+        events_.publish_response(reply, ok, cmd, ok ? "logic analyzer released" : err);
+        return;
+    }
+    if (std::strcmp(cmd, "logic_status") == 0) {
+        char extra[420];
+        logic_.status_json(extra, sizeof(extra));
+        events_.publish_response(reply, true, cmd, "ok", extra);
+        return;
+    }
+
+    int offset_words = 0;
+    int count_words = 0;
+    json_get_int(line, "offset_words", offset_words);
+    json_get_int(line, "count_words", count_words);
+    if (offset_words < 0 || count_words < 0) {
+        events_.publish_response(reply, false, cmd, "logic read offsets must be non-negative");
+        return;
+    }
+    ok = logic_.stream_capture(reply,
+                               static_cast<size_t>(offset_words),
+                               static_cast<size_t>(count_words),
+                               err,
+                               sizeof(err));
+    events_.publish_response(reply, ok, cmd, ok ? "logic capture uploaded" : err);
 }
 
 } // namespace rpmon

@@ -16,6 +16,8 @@ const char *protocol_name(ProtocolType type) {
         return "can";
     case ProtocolType::Gpio:
         return "gpio";
+    case ProtocolType::Logic:
+        return "logic";
     default:
         return "unknown";
     }
@@ -39,6 +41,9 @@ ProtocolType parse_protocol(const char *name) {
     }
     if (std::strcmp(name, "gpio") == 0 || std::strcmp(name, "io") == 0) {
         return ProtocolType::Gpio;
+    }
+    if (std::strcmp(name, "logic") == 0 || std::strcmp(name, "logic_analyzer") == 0) {
+        return ProtocolType::Logic;
     }
     return ProtocolType::Unknown;
 }

@@ -264,7 +264,19 @@ def stream(transport: Transport, timeout: float, log_file: Optional[TextIO] = No
 
 def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
     cmd = args.command
-    if cmd in {"hello", "status", "pins", "channels", "wifi_scan", "wifi_ap", "buffer_status"}:
+    if cmd in {
+        "hello",
+        "status",
+        "pins",
+        "channels",
+        "wifi_scan",
+        "wifi_ap",
+        "buffer_status",
+        "logic_start",
+        "logic_stop",
+        "logic_release",
+        "logic_status",
+    }:
         return {"cmd": cmd}
     if cmd == "events_read":
         payload = {"cmd": cmd, "count": args.count}
@@ -365,6 +377,20 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
         return {"cmd": "gpio_read", "id": args.id}
     if cmd == "gpio_write":
         return {"cmd": "gpio_write", "id": args.id, "level": bool(args.level)}
+    if cmd == "logic_config":
+        payload = {
+            "cmd": "logic_config",
+            "pin_base": args.pin_base,
+            "pin_count": args.pin_count,
+            "sample_rate": args.sample_rate,
+            "samples": args.samples,
+        }
+        if args.trigger_pin is not None:
+            payload["trigger_pin"] = args.trigger_pin
+            payload["trigger_level"] = bool(args.trigger_level)
+        return payload
+    if cmd == "logic_read":
+        return {"cmd": "logic_read", "offset_words": args.offset_words, "count_words": args.count_words}
     if cmd == "raw_json":
         return json.loads(args.payload)
     raise SystemExit(f"unsupported command: {cmd}")
@@ -467,6 +493,23 @@ def build_parser() -> argparse.ArgumentParser:
     gpio_write = sub.add_parser("gpio_write")
     gpio_write.add_argument("--id", type=int, required=True)
     gpio_write.add_argument("--level", type=int, choices=[0, 1], required=True)
+
+    logic_config = sub.add_parser("logic_config")
+    logic_config.add_argument("--pin-base", type=int, required=True)
+    logic_config.add_argument("--pin-count", type=int, required=True)
+    logic_config.add_argument("--sample-rate", type=int, default=1_000_000)
+    logic_config.add_argument("--samples", type=int, default=1024)
+    logic_config.add_argument("--trigger-pin", type=int)
+    logic_config.add_argument("--trigger-level", type=int, choices=[0, 1], default=1)
+
+    sub.add_parser("logic_start")
+    sub.add_parser("logic_stop")
+    sub.add_parser("logic_release")
+    sub.add_parser("logic_status")
+
+    logic_read = sub.add_parser("logic_read")
+    logic_read.add_argument("--offset-words", type=int, default=0)
+    logic_read.add_argument("--count-words", type=int, default=0)
 
     raw = sub.add_parser("raw_json")
     raw.add_argument("payload")
