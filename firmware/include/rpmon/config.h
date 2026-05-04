@@ -25,6 +25,7 @@ enum class ProtocolType : uint8_t {
     Spi,
     I2c,
     Can,
+    Gpio,
     Unknown
 };
 
@@ -37,6 +38,7 @@ struct PinSet {
     int cs = -1;
     int sda = -1;
     int scl = -1;
+    int gpio = -1;
 };
 
 struct ChannelConfig {
@@ -46,6 +48,10 @@ struct ChannelConfig {
     uint32_t baud = 115200;
     uint8_t address = 0;
     bool loopback = false;
+    bool gpio_output = false;
+    bool gpio_pull_up = false;
+    bool gpio_pull_down = false;
+    bool gpio_initial = false;
     PinSet pins;
 };
 

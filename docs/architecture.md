@@ -28,6 +28,7 @@ main
     ├── uart_channel         native UART RX/TX monitoring
     ├── spi_channel          native SPI transaction engine
     ├── i2c_channel          native I2C transaction engine
+    ├── gpio_channel         GPIO level input/output engine
     └── can_channel          reserved placeholder
 ```
 
@@ -87,11 +88,15 @@ Every protocol driver implements:
 - `transfer`: perform transaction-style protocols such as SPI/I2C.
 - `describe_json`: report channel configuration and state.
 
+`ChannelManager` also exposes `release`, which stops a channel, removes its
+slot, and returns claimed pins to `PinManager`.
+
 Native first-version behavior:
 
 - UART: passive RX monitoring plus TX injection.
 - SPI: transaction engine using native SPI; passive bus sniffing belongs in a future PIO channel.
 - I2C: transaction engine using native I2C; passive bus sniffing belongs in a future PIO channel.
+- GPIO: input/output level control with read, write, and input-change events.
 - CAN: reserved until the hardware path is chosen.
 
 ## Pin Policy

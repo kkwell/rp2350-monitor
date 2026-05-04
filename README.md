@@ -9,7 +9,7 @@ Current version:
 - Wi-Fi control/data channel on TCP port `4242`
 - USB CDC backup control/data channel
 - Pico-hosted setup AP: `RP2350-Monitor-xxxxxx`, password `rpmon2350`, IP `192.168.4.1`
-- Native UART, SPI, and I2C channel layers
+- Native UART, SPI, I2C, and GPIO channel layers
 - CAN reserved behind a driver interface
 - Host CLI that emits newline-delimited JSON for AI/tooling analysis
 - Bounded in-firmware event buffering with overflow counters and replay
@@ -102,6 +102,25 @@ I2C0 on GPIO4/GPIO5:
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_i2c --id 3 --instance 0 --sda 4 --scl 5 --baud 100000
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 start --id 3
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 i2c_xfer --id 3 --addr 0x50 --write 00 --read-len 16
+```
+
+GPIO16 as a controllable output:
+
+```sh
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_gpio --id 4 --gpio 16 --direction output --initial 0
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 start --id 4
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_write --id 4 --level 1
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_read --id 4
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 release --id 4
+```
+
+GPIO17 as an input with an internal pull-up:
+
+```sh
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_gpio --id 5 --gpio 17 --direction input --pull up
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 start --id 5
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_read --id 5
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 monitor
 ```
 
 ## Protocol

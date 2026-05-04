@@ -140,7 +140,7 @@ def parse_tcp(value: str, fallback_port: int) -> tuple[str, int]:
 
 def connect(args: argparse.Namespace) -> Transport:
     if args.serial:
-        return SerialTransport(args.serial, args.baud, args.timeout)
+        return SerialTransport(args.serial, args.serial_baud, args.timeout)
     host, port = parse_tcp(args.tcp, args.port)
     return TcpTransport(host, port, args.timeout)
 
@@ -326,12 +326,24 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
         if args.address is not None:
             payload["address"] = args.address
         return payload
+    if cmd == "config_gpio":
+        return {
+            "cmd": "channel_config",
+            "id": args.id,
+            "type": "gpio",
+            "gpio": args.gpio,
+            "direction": args.direction,
+            "pull": args.pull,
+            "initial": bool(args.initial),
+        }
     if cmd == "config_can":
         return {"cmd": "channel_config", "id": args.id, "type": "can"}
     if cmd == "start":
         return {"cmd": "channel_start", "id": args.id}
     if cmd == "stop":
         return {"cmd": "channel_stop", "id": args.id}
+    if cmd == "release":
+        return {"cmd": "channel_release", "id": args.id}
     if cmd == "write":
         return {"cmd": "channel_write", "id": args.id, "hex": args.hex}
     if cmd == "spi_xfer":
@@ -347,6 +359,10 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
             "write": args.write or "",
             "read_len": args.read_len,
         }
+    if cmd == "gpio_read":
+        return {"cmd": "gpio_read", "id": args.id}
+    if cmd == "gpio_write":
+        return {"cmd": "gpio_write", "id": args.id, "level": bool(args.level)}
     if cmd == "raw_json":
         return json.loads(args.payload)
     raise SystemExit(f"unsupported command: {cmd}")
@@ -362,7 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tcp", default=DEFAULT_HOST, help="TCP host or host:port, default: 192.168.4.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--serial", help="USB CDC serial device, e.g. /dev/tty.usbmodemXXXX")
-    parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--baud", dest="serial_baud", type=int, default=115200)
     parser.add_argument("--timeout", type=float, default=3.0)
     parser.add_argument("--log", help="Append received JSON lines to this JSONL file")
 
@@ -408,6 +424,13 @@ def build_parser() -> argparse.ArgumentParser:
     i2c.add_argument("--baud", type=int, default=100_000)
     i2c.add_argument("--address", type=lambda v: int(v, 0))
 
+    gpio = sub.add_parser("config_gpio")
+    gpio.add_argument("--id", type=int, required=True)
+    gpio.add_argument("--gpio", type=int, required=True)
+    gpio.add_argument("--direction", choices=["input", "output"], default="input")
+    gpio.add_argument("--pull", choices=["none", "up", "down"], default="none")
+    gpio.add_argument("--initial", type=int, choices=[0, 1], default=0)
+
     can = sub.add_parser("config_can")
     can.add_argument("--id", type=int, required=True)
 
@@ -416,6 +439,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     stop = sub.add_parser("stop")
     stop.add_argument("--id", type=int, required=True)
+
+    release = sub.add_parser("release")
+    release.add_argument("--id", type=int, required=True)
 
     write = sub.add_parser("write")
     write.add_argument("--id", type=int, required=True)
@@ -431,6 +457,13 @@ def build_parser() -> argparse.ArgumentParser:
     i2c_xfer.add_argument("--addr", type=lambda v: int(v, 0), required=True)
     i2c_xfer.add_argument("--write", default="")
     i2c_xfer.add_argument("--read-len", type=int, default=0)
+
+    gpio_read = sub.add_parser("gpio_read")
+    gpio_read.add_argument("--id", type=int, required=True)
+
+    gpio_write = sub.add_parser("gpio_write")
+    gpio_write.add_argument("--id", type=int, required=True)
+    gpio_write.add_argument("--level", type=int, choices=[0, 1], required=True)
 
     raw = sub.add_parser("raw_json")
     raw.add_argument("payload")

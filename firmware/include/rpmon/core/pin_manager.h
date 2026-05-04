@@ -16,7 +16,8 @@ enum class PinRole : uint8_t {
     I2cSda,
     I2cScl,
     CanTx,
-    CanRx
+    CanRx,
+    Gpio
 };
 
 class PinManager {
@@ -36,4 +37,3 @@ private:
 };
 
 } // namespace rpmon
-

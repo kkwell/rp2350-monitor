@@ -1,7 +1,7 @@
 # Buffering and Reliability Design
 
 This firmware treats hardware protocol traffic as product data, not debug text.
-UART, SPI, I2C, and future protocol drivers publish normalized JSON events into
+UART, SPI, I2C, GPIO, and future protocol drivers publish normalized JSON events into
 one shared telemetry path.
 
 ## Memory Budget
@@ -9,8 +9,8 @@ one shared telemetry path.
 Current measured firmware size:
 
 ```text
-text 476992 bytes
-bss  178828 bytes
+text 478312 bytes
+bss  189788 bytes
 ```
 
 `text` lives in flash. `bss` is static SRAM and includes lwIP buffers, device
@@ -103,6 +103,7 @@ python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX buffer_status
 - Queue full: oldest events are dropped, counters increase, warning status is
   emitted.
 - Oversized data publish: data is split into bounded chunks with `offset`.
+- GPIO input changes, reads, and writes are normalized as one-byte data events.
 - Invalid command payloads: command responses return `ok:false` with a clear
   `msg`; they are not added to the telemetry queue.
 - Wi-Fi connection failure: AP recovery is started and per-profile

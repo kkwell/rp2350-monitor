@@ -14,6 +14,7 @@ public:
 private:
     void handle_channel_config(const char *line, LineSink &reply);
     void handle_channel_io(const char *line, LineSink &reply, const char *cmd);
+    void handle_gpio_io(const char *line, LineSink &reply, const char *cmd);
 
     WifiManager &wifi_;
     ChannelManager &channels_;
@@ -22,4 +23,3 @@ private:
 };
 
 } // namespace rpmon
-

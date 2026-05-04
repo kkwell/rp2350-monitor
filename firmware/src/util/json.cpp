@@ -18,22 +18,22 @@ const char *find_key(const char *json, const char *key) {
     if (n <= 0 || static_cast<size_t>(n) >= sizeof(pattern)) {
         return nullptr;
     }
-    const char *p = std::strstr(json, pattern);
-    if (!p) {
-        return nullptr;
+    const char *p = json;
+    while ((p = std::strstr(p, pattern)) != nullptr) {
+        const char *after = p + n;
+        while (*after && std::isspace(static_cast<unsigned char>(*after))) {
+            ++after;
+        }
+        if (*after == ':') {
+            ++after;
+            while (*after && std::isspace(static_cast<unsigned char>(*after))) {
+                ++after;
+            }
+            return after;
+        }
+        p += n;
     }
-    p += n;
-    while (*p && std::isspace(static_cast<unsigned char>(*p))) {
-        ++p;
-    }
-    if (*p != ':') {
-        return nullptr;
-    }
-    ++p;
-    while (*p && std::isspace(static_cast<unsigned char>(*p))) {
-        ++p;
-    }
-    return p;
+    return nullptr;
 }
 
 } // namespace

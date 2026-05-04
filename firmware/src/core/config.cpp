@@ -14,6 +14,8 @@ const char *protocol_name(ProtocolType type) {
         return "i2c";
     case ProtocolType::Can:
         return "can";
+    case ProtocolType::Gpio:
+        return "gpio";
     default:
         return "unknown";
     }
@@ -35,8 +37,10 @@ ProtocolType parse_protocol(const char *name) {
     if (std::strcmp(name, "can") == 0) {
         return ProtocolType::Can;
     }
+    if (std::strcmp(name, "gpio") == 0 || std::strcmp(name, "io") == 0) {
+        return ProtocolType::Gpio;
+    }
     return ProtocolType::Unknown;
 }
 
 } // namespace rpmon
-

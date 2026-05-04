@@ -19,7 +19,7 @@ void EventBus::add_sink(LineSink *sink) {
 void EventBus::publish_response(LineSink &sink, bool ok, const char *cmd, const char *message, const char *extra_json) {
     char escaped[160];
     json_escape(message ? message : "", escaped, sizeof(escaped));
-    static char line[3600];
+    static char line[4800];
     snprintf(line, sizeof(line), "{\"type\":\"resp\",\"ok\":%s,\"cmd\":\"%s\",\"msg\":\"%s\"%s%s}",
              ok ? "true" : "false",
              cmd ? cmd : "",

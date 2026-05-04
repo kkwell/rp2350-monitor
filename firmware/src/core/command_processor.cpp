@@ -8,6 +8,36 @@
 
 namespace rpmon {
 
+namespace {
+
+bool read_boolish(const char *line, const char *key, bool &out) {
+    if (json_get_bool(line, key, out)) {
+        return true;
+    }
+    int value = 0;
+    if (json_get_int(line, key, value)) {
+        out = value != 0;
+        return true;
+    }
+    char text[12];
+    if (!json_get_string(line, key, text, sizeof(text))) {
+        return false;
+    }
+    if (std::strcmp(text, "1") == 0 || std::strcmp(text, "true") == 0 ||
+        std::strcmp(text, "high") == 0 || std::strcmp(text, "on") == 0) {
+        out = true;
+        return true;
+    }
+    if (std::strcmp(text, "0") == 0 || std::strcmp(text, "false") == 0 ||
+        std::strcmp(text, "low") == 0 || std::strcmp(text, "off") == 0) {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
 CommandProcessor::CommandProcessor(WifiManager &wifi, ChannelManager &channels, PinManager &pins, EventBus &events)
     : wifi_(wifi), channels_(channels), pins_(pins), events_(events) {}
 
@@ -26,9 +56,9 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     }
     if (std::strcmp(cmd, "status") == 0) {
         static char wifi[1800];
-        static char channels[620];
+        static char channels[1600];
         char buffers[420];
-        static char extra[3100];
+        static char extra[3900];
         wifi_.status_json(wifi, sizeof(wifi));
         channels_.list_json(channels, sizeof(channels));
         events_.stats_json(buffers, sizeof(buffers));
@@ -132,13 +162,18 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         return;
     }
     if (std::strcmp(cmd, "channel_start") == 0 || std::strcmp(cmd, "channel_stop") == 0 ||
+        std::strcmp(cmd, "channel_release") == 0 ||
         std::strcmp(cmd, "channel_write") == 0 || std::strcmp(cmd, "channel_transfer") == 0 ||
         std::strcmp(cmd, "spi_xfer") == 0 || std::strcmp(cmd, "i2c_xfer") == 0) {
         handle_channel_io(line, reply, cmd);
         return;
     }
+    if (std::strcmp(cmd, "gpio_read") == 0 || std::strcmp(cmd, "gpio_write") == 0) {
+        handle_gpio_io(line, reply, cmd);
+        return;
+    }
     if (std::strcmp(cmd, "channels") == 0) {
-        char channels[620];
+        char channels[1600];
         channels_.list_json(channels, sizeof(channels));
         events_.publish_response(reply, true, cmd, "ok", channels);
         return;
@@ -178,6 +213,39 @@ void CommandProcessor::handle_channel_config(const char *line, LineSink &reply) 
     json_get_int(line, "cs", config.pins.cs);
     json_get_int(line, "sda", config.pins.sda);
     json_get_int(line, "scl", config.pins.scl);
+    json_get_int(line, "gpio", config.pins.gpio);
+
+    char direction[12];
+    if (json_get_string(line, "direction", direction, sizeof(direction))) {
+        if (std::strcmp(direction, "output") == 0 || std::strcmp(direction, "out") == 0) {
+            config.gpio_output = true;
+        } else if (std::strcmp(direction, "input") == 0 || std::strcmp(direction, "in") == 0) {
+            config.gpio_output = false;
+        } else {
+            events_.publish_response(reply, false, "channel_config", "invalid GPIO direction");
+            return;
+        }
+    }
+    char pull[12];
+    if (json_get_string(line, "pull", pull, sizeof(pull))) {
+        if (std::strcmp(pull, "up") == 0) {
+            config.gpio_pull_up = true;
+            config.gpio_pull_down = false;
+        } else if (std::strcmp(pull, "down") == 0) {
+            config.gpio_pull_up = false;
+            config.gpio_pull_down = true;
+        } else if (std::strcmp(pull, "none") == 0 || std::strcmp(pull, "off") == 0) {
+            config.gpio_pull_up = false;
+            config.gpio_pull_down = false;
+        } else {
+            events_.publish_response(reply, false, "channel_config", "invalid GPIO pull mode");
+            return;
+        }
+    }
+    read_boolish(line, "pull_up", config.gpio_pull_up);
+    read_boolish(line, "pull_down", config.gpio_pull_down);
+    read_boolish(line, "initial", config.gpio_initial);
+    read_boolish(line, "level", config.gpio_initial);
 
     char err[160] = {};
     bool ok = channels_.configure(config, err, sizeof(err));
@@ -201,6 +269,11 @@ void CommandProcessor::handle_channel_io(const char *line, LineSink &reply, cons
     if (std::strcmp(cmd, "channel_stop") == 0) {
         ok = channels_.stop(id, err, sizeof(err));
         events_.publish_response(reply, ok, cmd, ok ? "channel stopped" : err);
+        return;
+    }
+    if (std::strcmp(cmd, "channel_release") == 0) {
+        ok = channels_.release(id, err, sizeof(err));
+        events_.publish_response(reply, ok, cmd, ok ? "channel released" : err);
         return;
     }
 
@@ -234,6 +307,34 @@ void CommandProcessor::handle_channel_io(const char *line, LineSink &reply, cons
     }
     ok = channels_.transfer(id, static_cast<uint8_t>(addr), data, data_len, static_cast<size_t>(read_len), err, sizeof(err));
     events_.publish_response(reply, ok, cmd, ok ? "transfer complete" : err);
+}
+
+void CommandProcessor::handle_gpio_io(const char *line, LineSink &reply, const char *cmd) {
+    int id = -1;
+    if (!json_get_int(line, "id", id)) {
+        events_.publish_response(reply, false, cmd, "missing channel id");
+        return;
+    }
+
+    char err[160] = {};
+    if (std::strcmp(cmd, "gpio_write") == 0) {
+        bool level = false;
+        if (!read_boolish(line, "level", level)) {
+            events_.publish_response(reply, false, cmd, "missing or invalid GPIO level");
+            return;
+        }
+        bool ok = channels_.gpio_write(id, level, err, sizeof(err));
+        char extra[24];
+        snprintf(extra, sizeof(extra), "\"level\":%s", level ? "true" : "false");
+        events_.publish_response(reply, ok, cmd, ok ? "gpio level set" : err, ok ? extra : nullptr);
+        return;
+    }
+
+    bool level = false;
+    bool ok = channels_.gpio_read(id, level, err, sizeof(err));
+    char extra[24];
+    snprintf(extra, sizeof(extra), "\"level\":%s", level ? "true" : "false");
+    events_.publish_response(reply, ok, cmd, ok ? "gpio level read" : err, ok ? extra : nullptr);
 }
 
 } // namespace rpmon

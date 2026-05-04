@@ -369,8 +369,8 @@ void HttpServer::handle_form_action(Client &client, const char *path, const char
 }
 
 void HttpServer::send_page(Client &client, const char *message) {
-    static char status[3300];
-    static char escaped_status[4700];
+    static char status[4300];
+    static char escaped_status[6500];
     static char profile_rows[1200];
     static char profile_options[520];
     static char scan_options[1400];
@@ -384,7 +384,7 @@ void HttpServer::send_page(Client &client, const char *message) {
     html_escape(message ? message : "", escaped_message, sizeof(escaped_message));
 
     const char *refresh_script = wifi_.scan_active() ? "<script>setTimeout(function(){location.href='/'},2500)</script>" : "";
-    static char body[9600];
+    static char body[12000];
     std::snprintf(body, sizeof(body),
                   "<!doctype html><html><head><meta charset='utf-8'>"
                   "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -430,7 +430,7 @@ void HttpServer::send_page(Client &client, const char *message) {
 }
 
 void HttpServer::send_status_json(Client &client) {
-    static char body[3300];
+    static char body[4300];
     build_status_json(body, sizeof(body));
     send_response(client, 200, "OK", "application/json", body);
 }
@@ -464,7 +464,7 @@ void HttpServer::send_response(Client &client, int code, const char *reason, con
 
 void HttpServer::build_status_json(char *out, size_t out_len) const {
     static char wifi[1800];
-    static char channels[620];
+    static char channels[1600];
     char buffers[420];
     wifi_.status_json(wifi, sizeof(wifi));
     channels_.list_json(channels, sizeof(channels));

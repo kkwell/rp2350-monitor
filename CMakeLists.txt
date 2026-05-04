@@ -30,6 +30,7 @@ add_executable(rp2350_monitor
     firmware/src/core/event_bus.cpp
     firmware/src/core/pin_manager.cpp
     firmware/src/drivers/can_channel.cpp
+    firmware/src/drivers/gpio_channel.cpp
     firmware/src/drivers/i2c_channel.cpp
     firmware/src/drivers/spi_channel.cpp
     firmware/src/drivers/uart_channel.cpp
@@ -50,7 +51,7 @@ target_include_directories(rp2350_monitor PRIVATE
 )
 
 target_compile_definitions(rp2350_monitor PRIVATE
-    RPMON_FW_VERSION="0.1.0"
+    RPMON_FW_VERSION="0.2.0"
     PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=1
     PICO_STDIO_USB_RESET_INTERFACE_SUPPORT_RESET_TO_BOOTSEL=1
     PICO_STDIO_USB_RESET_INTERFACE_SUPPORT_RESET_TO_FLASH_BOOT=1

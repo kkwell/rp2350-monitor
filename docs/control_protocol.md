@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.1.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.2.0","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -167,12 +167,20 @@ Every hardware protocol uses this sequence:
 
 1. `channel_config`
 2. `channel_start`
-3. `channel_write`, `spi_xfer`, or `i2c_xfer`
+3. `channel_write`, `spi_xfer`, `i2c_xfer`, `gpio_write`, or `gpio_read`
 4. read `event` messages
 5. `channel_stop`
 
 Channel IDs are positive integers chosen by the host. Reconfiguring an existing
 ID stops the previous driver and releases its pins.
+
+`channel_stop` disables the hardware while keeping the configuration available
+for a later `channel_start`. `channel_release` stops the hardware, removes the
+channel, and releases its pins for reuse.
+
+```json
+{"cmd":"channel_release","id":4}
+```
 
 ## UART
 
@@ -231,6 +239,44 @@ Write, read, or write-then-read:
 `dir:"tx"` / `dir:"rx"`. Passive I2C sniffing is reserved for a future PIO
 driver.
 
+## GPIO
+
+Configure a general-purpose I/O pin as a protocol channel:
+
+```json
+{"cmd":"channel_config","id":4,"type":"gpio","gpio":16,"direction":"output","initial":false}
+{"cmd":"channel_start","id":4}
+```
+
+`direction` is `input` or `output`. Inputs may set `pull` to `none`, `up`, or
+`down`. Outputs ignore pull mode and use `initial` as the first driven level.
+
+Set and read level:
+
+```json
+{"cmd":"gpio_write","id":4,"level":true}
+{"cmd":"gpio_read","id":4}
+```
+
+`gpio_read` responses include the sampled level:
+
+```json
+{"type":"resp","ok":true,"cmd":"gpio_read","msg":"gpio level read","level":true}
+```
+
+GPIO emits one-byte data events with `proto:"gpio"` and `hex:"00"` or
+`hex:"01"`. Directions are:
+
+- `write`: host changed an output level.
+- `read`: host sampled a channel level.
+- `change`: firmware polling detected an input transition.
+
+Example event:
+
+```json
+{"type":"event","seq":31,"ts_us":1234567,"channel":4,"proto":"gpio","dir":"write","len":1,"offset":0,"hex":"01"}
+```
+
 ## CAN Reservation
 
 The command parser accepts `type:"can"` as a reserved protocol name, but the
@@ -251,6 +297,14 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 wifi_clear --slot 1
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 buffer_status
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 events_read --count 64
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 uart_loopback_test --id 7 --stop
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_spi --id 2 --instance 0 --sck 2 --mosi 3 --miso 0 --cs 1
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 spi_xfer --id 2 --hex 9f000000
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_i2c --id 3 --instance 0 --sda 4 --scl 5
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 i2c_xfer --id 3 --addr 0x50 --write 00 --read-len 16
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 config_gpio --id 4 --gpio 16 --direction output --initial 0
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_write --id 4 --level 1
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_read --id 4
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 release --id 4
 ```
 
 External tools should follow the same rule: do not scrape human text; consume

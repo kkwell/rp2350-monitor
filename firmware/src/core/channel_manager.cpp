@@ -4,6 +4,14 @@
 
 namespace rpmon {
 
+namespace {
+
+bool has_singleton_instance(ProtocolType type) {
+    return type == ProtocolType::Uart || type == ProtocolType::Spi || type == ProtocolType::I2c;
+}
+
+} // namespace
+
 ChannelManager::ChannelManager(PinManager &pins, EventBus &events) : pins_(pins), events_(events) {}
 
 bool ChannelManager::configure(const ChannelConfig &config, char *err, size_t err_len) {
@@ -17,7 +25,7 @@ bool ChannelManager::configure(const ChannelConfig &config, char *err, size_t er
     }
     for (Slot &existing : slots_) {
         const Channel *drv = driver_for(existing);
-        if (existing.used && drv && drv->id() != config.id && existing.type == config.type &&
+        if (existing.used && drv && has_singleton_instance(config.type) && drv->id() != config.id && existing.type == config.type &&
             drv->instance() == config.instance) {
             snprintf(err, err_len, "%s%d is already assigned to another channel",
                      protocol_name(config.type), config.instance);
@@ -78,6 +86,21 @@ bool ChannelManager::stop(int id, char *err, size_t err_len) {
     return true;
 }
 
+bool ChannelManager::release(int id, char *err, size_t err_len) {
+    Slot *slot = find_slot(id);
+    if (!slot) {
+        snprintf(err, err_len, "channel not found");
+        return false;
+    }
+    Channel *driver = driver_for(*slot);
+    if (driver) {
+        driver->stop();
+    }
+    pins_.release_channel(id);
+    *slot = Slot{};
+    return true;
+}
+
 bool ChannelManager::write(int id, const uint8_t *data, size_t len, char *err, size_t err_len) {
     Slot *slot = find_slot(id);
     if (!slot) {
@@ -94,6 +117,32 @@ bool ChannelManager::transfer(int id, uint8_t address, const uint8_t *tx, size_t
         return false;
     }
     return driver_for(*slot)->transfer(address, tx, tx_len, rx_len, events_, err, err_len);
+}
+
+bool ChannelManager::gpio_write(int id, bool level, char *err, size_t err_len) {
+    Slot *slot = find_slot(id);
+    if (!slot) {
+        snprintf(err, err_len, "channel not found");
+        return false;
+    }
+    if (slot->type != ProtocolType::Gpio) {
+        snprintf(err, err_len, "channel is not GPIO");
+        return false;
+    }
+    return slot->gpio.set_level(level, events_, err, err_len);
+}
+
+bool ChannelManager::gpio_read(int id, bool &level, char *err, size_t err_len) {
+    Slot *slot = find_slot(id);
+    if (!slot) {
+        snprintf(err, err_len, "channel not found");
+        return false;
+    }
+    if (slot->type != ProtocolType::Gpio) {
+        snprintf(err, err_len, "channel is not GPIO");
+        return false;
+    }
+    return slot->gpio.read_level(level, events_, err, err_len);
 }
 
 void ChannelManager::poll() {
@@ -119,7 +168,7 @@ void ChannelManager::list_json(char *out, size_t out_len) const {
         if (!slot.used) {
             continue;
         }
-        char desc[192];
+        char desc[256];
         const Channel *driver = driver_for(slot);
         if (!driver) {
             continue;
@@ -168,6 +217,8 @@ Channel *ChannelManager::driver_for(Slot &slot) {
         return &slot.i2c;
     case ProtocolType::Can:
         return &slot.can;
+    case ProtocolType::Gpio:
+        return &slot.gpio;
     default:
         return nullptr;
     }
@@ -183,6 +234,8 @@ const Channel *ChannelManager::driver_for(const Slot &slot) const {
         return &slot.i2c;
     case ProtocolType::Can:
         return &slot.can;
+    case ProtocolType::Gpio:
+        return &slot.gpio;
     default:
         return nullptr;
     }
