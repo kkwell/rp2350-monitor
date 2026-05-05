@@ -76,6 +76,11 @@ This keeps high-speed captures from evicting ordinary UART/SPI/I2C/GPIO event
 history. It also means hosts must finish `logic_read` and store the resulting
 JSONL if they need the full capture after another `logic_start`.
 
+Host-side decoding does not consume RP2350 SRAM. `logic_decode` loads the raw
+capture JSONL on the computer and emits decoded JSONL for UART/SPI/I2C, edge
+lists, and timing summaries. Very large CSV/VCD exports are bounded by host disk
+space rather than Pico memory.
+
 The firmware still cannot overcome physical bandwidth limits. Hosts should keep
 USB or TCP reads active and write JSONL to disk when capturing sustained traffic.
 Any non-zero `dropped_events` or per-channel `dropped_events` means the capture
@@ -89,3 +94,6 @@ has a gap and the host should mark the analysis as incomplete.
 - GPIO supports input sampling, output control, and input-change events.
 - Logic analyzer supports triggered fixed-rate sampling of multiple contiguous
   GPIOs into SRAM, followed by USB/TCP upload.
+- Logic analyzer trigger modes are level, rising edge, and falling edge. Pattern
+  trigger, pre-trigger circular capture, and burst capture remain firmware
+  extension points.

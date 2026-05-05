@@ -12,6 +12,12 @@
 
 namespace rpmon {
 
+enum class LogicTriggerMode : uint8_t {
+    Level,
+    Rising,
+    Falling
+};
+
 class LogicAnalyzer {
 public:
     explicit LogicAnalyzer(PinManager &pins);
@@ -21,6 +27,7 @@ public:
                    uint32_t sample_rate_hz,
                    uint32_t sample_count,
                    int trigger_pin,
+                   LogicTriggerMode trigger_mode,
                    bool trigger_level,
                    char *err,
                    size_t err_len);
@@ -56,6 +63,7 @@ private:
     uint32_t sample_count_ = 0;
     uint32_t capture_words_ = 0;
     int trigger_pin_ = -1;
+    LogicTriggerMode trigger_mode_ = LogicTriggerMode::Level;
     bool trigger_level_ = true;
     uint32_t buffer_[kLogicCaptureWords] = {};
 };

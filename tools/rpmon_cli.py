@@ -17,6 +17,9 @@ import termios
 import time
 from typing import Any, Dict, Iterable, Optional, TextIO
 
+from rpmon_logic import decode_command as logic_decode_command
+from rpmon_logic import export_command as logic_export_command
+
 
 DEFAULT_HOST = "192.168.4.1"
 DEFAULT_PORT = 4242
@@ -193,6 +196,39 @@ def expect_response(
     return False, seen
 
 
+def print_json_line_to_files(line: str, log_files: Iterable[TextIO]) -> Optional[Dict[str, Any]]:
+    print(line, flush=True)
+    for log_file in log_files:
+        log_file.write(line + "\n")
+        log_file.flush()
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+
+def expect_response_to_files(
+    transport: Transport,
+    payload: Dict[str, Any],
+    timeout: float,
+    log_files: Iterable[TextIO],
+) -> tuple[bool, list[Dict[str, Any]]]:
+    transport.send_json(payload)
+    deadline = time.monotonic() + timeout
+    seen: list[Dict[str, Any]] = []
+    while time.monotonic() < deadline:
+        line = transport.readline(max(0.05, deadline - time.monotonic()))
+        if line is None:
+            break
+        doc = print_json_line_to_files(line, log_files)
+        if not doc:
+            continue
+        seen.append(doc)
+        if doc.get("type") == "resp" and doc.get("cmd") == payload.get("cmd"):
+            return bool(doc.get("ok")), seen
+    return False, seen
+
+
 def uart_loopback_test(transport: Transport, args: argparse.Namespace, log_file: Optional[TextIO] = None) -> int:
     expected_hex = args.hex.lower()
     rx_stream = ""
@@ -253,6 +289,70 @@ def uart_loopback_test(transport: Transport, args: argparse.Namespace, log_file:
     if args.stop:
         expect_response(transport, {"cmd": "channel_stop", "id": args.id}, args.timeout, log_file)
     return 3
+
+
+def logic_capture_workflow(
+    transport: Transport,
+    args: argparse.Namespace,
+    log_file: Optional[TextIO] = None,
+) -> int:
+    output_file = open(args.output, "w", encoding="utf-8")
+    logs = [output_file]
+    if log_file is not None:
+        logs.append(log_file)
+    try:
+        config: Dict[str, Any] = {
+            "cmd": "logic_config",
+            "pin_base": args.pin_base,
+            "pin_count": args.pin_count,
+            "sample_rate": args.sample_rate,
+            "samples": args.samples,
+        }
+        if args.trigger_pin is not None:
+            config["trigger_pin"] = args.trigger_pin
+            config["trigger_mode"] = args.trigger_mode
+            config["trigger_level"] = bool(args.trigger_level)
+        ok, _ = expect_response_to_files(transport, config, args.timeout, logs)
+        if not ok:
+            return 2
+        ok, _ = expect_response_to_files(transport, {"cmd": "logic_start"}, args.timeout, logs)
+        if not ok:
+            return 2
+
+        deadline = time.monotonic() + args.wait_timeout
+        complete = False
+        while time.monotonic() < deadline:
+            ok, seen = expect_response_to_files(transport, {"cmd": "logic_status"}, args.timeout, logs)
+            if not ok:
+                return 2
+            for doc in seen:
+                logic = doc.get("logic")
+                if isinstance(logic, dict):
+                    complete = bool(logic.get("complete"))
+                    running = bool(logic.get("running"))
+                    if complete:
+                        break
+                    if not running and not complete:
+                        return 2
+            if complete:
+                break
+            time.sleep(args.poll_interval)
+
+        if not complete:
+            expect_response_to_files(transport, {"cmd": "logic_stop"}, args.timeout, logs)
+            return 3
+
+        ok, _ = expect_response_to_files(
+            transport,
+            {"cmd": "logic_read", "offset_words": 0, "count_words": 0},
+            args.read_timeout,
+            logs,
+        )
+        if args.release:
+            expect_response_to_files(transport, {"cmd": "logic_release"}, args.timeout, logs)
+        return 0 if ok else 2
+    finally:
+        output_file.close()
 
 
 def stream(transport: Transport, timeout: float, log_file: Optional[TextIO] = None) -> int:
@@ -387,6 +487,7 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
         }
         if args.trigger_pin is not None:
             payload["trigger_pin"] = args.trigger_pin
+            payload["trigger_mode"] = args.trigger_mode
             payload["trigger_level"] = bool(args.trigger_level)
         return payload
     if cmd == "logic_read":
@@ -500,6 +601,7 @@ def build_parser() -> argparse.ArgumentParser:
     logic_config.add_argument("--sample-rate", type=int, default=1_000_000)
     logic_config.add_argument("--samples", type=int, default=1024)
     logic_config.add_argument("--trigger-pin", type=int)
+    logic_config.add_argument("--trigger-mode", choices=["level", "rising", "falling"], default="level")
     logic_config.add_argument("--trigger-level", type=int, choices=[0, 1], default=1)
 
     sub.add_parser("logic_start")
@@ -510,6 +612,49 @@ def build_parser() -> argparse.ArgumentParser:
     logic_read = sub.add_parser("logic_read")
     logic_read.add_argument("--offset-words", type=int, default=0)
     logic_read.add_argument("--count-words", type=int, default=0)
+
+    logic_capture = sub.add_parser("logic_capture")
+    logic_capture.add_argument("--pin-base", type=int, required=True)
+    logic_capture.add_argument("--pin-count", type=int, required=True)
+    logic_capture.add_argument("--sample-rate", type=int, default=1_000_000)
+    logic_capture.add_argument("--samples", type=int, default=1024)
+    logic_capture.add_argument("--trigger-pin", type=int)
+    logic_capture.add_argument("--trigger-mode", choices=["level", "rising", "falling"], default="level")
+    logic_capture.add_argument("--trigger-level", type=int, choices=[0, 1], default=1)
+    logic_capture.add_argument("--output", required=True, help="Write raw logic JSONL capture")
+    logic_capture.add_argument("--wait-timeout", type=float, default=10.0)
+    logic_capture.add_argument("--read-timeout", type=float, default=20.0)
+    logic_capture.add_argument("--poll-interval", type=float, default=0.05)
+    logic_capture.add_argument("--release", action="store_true")
+
+    logic_decode = sub.add_parser("logic_decode")
+    logic_decode.add_argument("--input", required=True)
+    logic_decode.add_argument("--capture-id", type=int)
+    logic_decode.add_argument("--decoder", choices=["summary", "edges", "uart", "spi", "i2c"], default="summary")
+    logic_decode.add_argument("--output")
+    logic_decode.add_argument("--pin", type=int, action="append", help="GPIO or relative pin for edge decode; repeatable")
+    logic_decode.add_argument("--rx-pin", type=int)
+    logic_decode.add_argument("--baud", type=int, default=115200)
+    logic_decode.add_argument("--data-bits", type=int, default=8)
+    logic_decode.add_argument("--parity", choices=["none", "even", "odd"], default="none")
+    logic_decode.add_argument("--stop-bits", type=float, default=1.0)
+    logic_decode.add_argument("--invert", action="store_true")
+    logic_decode.add_argument("--sck-pin", type=int)
+    logic_decode.add_argument("--mosi-pin", type=int)
+    logic_decode.add_argument("--miso-pin", type=int)
+    logic_decode.add_argument("--cs-pin", type=int)
+    logic_decode.add_argument("--mode", type=int, choices=[0, 1, 2, 3], default=0)
+    logic_decode.add_argument("--cs-active-high", action="store_true")
+    logic_decode.add_argument("--word-bits", type=int, default=8)
+    logic_decode.add_argument("--bit-order", choices=["msb", "lsb"], default="msb")
+    logic_decode.add_argument("--sda-pin", type=int)
+    logic_decode.add_argument("--scl-pin", type=int)
+
+    logic_export = sub.add_parser("logic_export")
+    logic_export.add_argument("--input", required=True)
+    logic_export.add_argument("--capture-id", type=int)
+    logic_export.add_argument("--format", choices=["csv", "vcd"], required=True)
+    logic_export.add_argument("--output", required=True)
 
     raw = sub.add_parser("raw_json")
     raw.add_argument("payload")
@@ -530,6 +675,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "logic_decode":
+        return logic_decode_command(args)
+    if args.command == "logic_export":
+        return logic_export_command(args)
+
     transport = connect(args)
     log_file: Optional[TextIO] = None
     if args.log:
@@ -539,6 +689,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return stream(transport, args.timeout, log_file)
         if args.command == "uart_loopback_test":
             return uart_loopback_test(transport, args, log_file)
+        if args.command == "logic_capture":
+            return logic_capture_workflow(transport, args, log_file)
         payload = command_payload(args)
         return transact(transport, payload, args.timeout, log_file)
     finally:

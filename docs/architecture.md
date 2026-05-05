@@ -33,6 +33,16 @@ main
     └── can_channel          reserved placeholder
 ```
 
+Host tooling:
+
+```text
+tools/rpmon_cli.py
+├── device control          USB/TCP JSON commands
+├── logic_capture           configure, start, wait, read, and persist JSONL
+├── logic_decode            summary, edges, UART, SPI, and I2C analysis
+└── logic_export            CSV and VCD conversion
+```
+
 ## Data Model
 
 All transports carry newline-delimited JSON.
@@ -101,6 +111,12 @@ Flow:
 The implementation follows the same design pattern as Raspberry Pi's
 `pico-examples/pio/logic_analyser` example: PIO handles deterministic sampling,
 DMA handles high-speed memory movement, and the CPU handles control and upload.
+
+The host-side analysis layer follows the product split used by
+`gusmanb/logicanalyzer`: firmware captures a compact sample stream, while the
+computer handles decoding, export, and repeated analysis. The current CLI keeps
+that analysis machine-readable instead of GUI-centric, which makes it suitable
+for AI-assisted debugging pipelines.
 
 ## Protocol Channel Contract
 

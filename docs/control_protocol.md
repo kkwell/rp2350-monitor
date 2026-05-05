@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.4.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.5.0","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -190,6 +190,7 @@ capture engine:
     "words": 128,
     "record_bits": 32,
     "trigger_pin": -1,
+    "trigger_mode": "level",
     "trigger_level": true,
     "buffer_words_max": 32768,
     "buffer_bytes": 131072,
@@ -331,10 +332,13 @@ Configure a capture:
 {"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024}
 ```
 
-Optional trigger:
+Optional trigger. `trigger_mode` may be `level`, `rising`, or `falling`.
+`level` uses `trigger_level`; edge modes wait for the opposite level first and
+then the requested edge.
 
 ```json
 {"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"trigger_pin":16,"trigger_level":true}
+{"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"trigger_pin":16,"trigger_mode":"rising"}
 ```
 
 Start and poll status:
@@ -368,9 +372,30 @@ Data encoding:
   `bit_index = pin + sample * pin_count`, `word_index = bit_index / record_bits`,
   and bit mask `1u << ((bit_index % record_bits) + 32 - record_bits)`.
 
-The first version captures into RAM first and then uploads over USB or TCP. It
+This version captures into RAM first and then uploads over USB or TCP. It
 does not provide infinite streaming at the configured sample rate; sustained
 capture length is bounded by `buffer_words_max`.
+
+Host-side logic analysis:
+
+```sh
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 4096 --output capture.jsonl --release
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder edges --pin 16
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder uart --rx-pin 16 --baud 115200
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder spi --cs-pin 16 --sck-pin 17 --mosi-pin 18 --miso-pin 19 --mode 0
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder i2c --sda-pin 16 --scl-pin 17
+python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format csv --output capture.csv
+python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format vcd --output capture.vcd
+```
+
+`logic_decode` emits newline-delimited JSON. Initial built-in decoders cover:
+
+- `summary`: capture metadata and per-pin high/low/edge/frequency statistics.
+- `edges`: rising/falling edge list for selected pins.
+- `uart`: async UART, default 8N1, LSB-first data.
+- `spi`: SPI modes 0..3, optional CS, MOSI/MISO, MSB/LSB word assembly.
+- `i2c`: START/STOP, 7-bit address, R/W, data bytes, ACK/NACK.
 
 ## CAN Reservation
 
@@ -406,6 +431,8 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_start
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_status
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_read --offset-words 0 --count-words 0
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_release
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_capture --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 4096 --output capture.jsonl --release
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary
 ```
 
 External tools should follow the same rule: do not scrape human text; consume

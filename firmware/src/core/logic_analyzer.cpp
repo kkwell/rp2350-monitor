@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "hardware/clocks.h"
+#include "hardware/gpio.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "rpmon/util/hex.h"
 
@@ -17,6 +18,7 @@ bool LogicAnalyzer::configure(uint8_t pin_base,
                               uint32_t sample_rate_hz,
                               uint32_t sample_count,
                               int trigger_pin,
+                              LogicTriggerMode trigger_mode,
                               bool trigger_level,
                               char *err,
                               size_t err_len) {
@@ -83,6 +85,7 @@ bool LogicAnalyzer::configure(uint8_t pin_base,
     sample_count_ = sample_count;
     capture_words_ = words;
     trigger_pin_ = trigger_pin;
+    trigger_mode_ = trigger_mode;
     trigger_level_ = trigger_level;
     configured_ = true;
     complete_ = false;
@@ -157,7 +160,15 @@ bool LogicAnalyzer::start(char *err, size_t err_len) {
 
     bus_ctrl_hw->priority |= BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
     if (trigger_pin_ >= 0) {
-        pio_sm_exec(pio_, static_cast<uint>(sm_), pio_encode_wait_gpio(trigger_level_, static_cast<uint>(trigger_pin_)));
+        if (trigger_mode_ == LogicTriggerMode::Rising) {
+            pio_sm_exec(pio_, static_cast<uint>(sm_), pio_encode_wait_gpio(false, static_cast<uint>(trigger_pin_)));
+            pio_sm_exec(pio_, static_cast<uint>(sm_), pio_encode_wait_gpio(true, static_cast<uint>(trigger_pin_)));
+        } else if (trigger_mode_ == LogicTriggerMode::Falling) {
+            pio_sm_exec(pio_, static_cast<uint>(sm_), pio_encode_wait_gpio(true, static_cast<uint>(trigger_pin_)));
+            pio_sm_exec(pio_, static_cast<uint>(sm_), pio_encode_wait_gpio(false, static_cast<uint>(trigger_pin_)));
+        } else {
+            pio_sm_exec(pio_, static_cast<uint>(sm_), pio_encode_wait_gpio(trigger_level_, static_cast<uint>(trigger_pin_)));
+        }
     }
     ++capture_id_;
     running_ = true;
@@ -191,6 +202,7 @@ bool LogicAnalyzer::release(char *err, size_t err_len) {
     pin_base_ = 0;
     pin_count_ = 0;
     trigger_pin_ = -1;
+    trigger_mode_ = LogicTriggerMode::Level;
     trigger_level_ = true;
     completion_reported_ = false;
     return true;
@@ -222,8 +234,14 @@ void LogicAnalyzer::poll(EventBus &events) {
 }
 
 void LogicAnalyzer::status_json(char *out, size_t out_len) const {
+    const char *trigger_mode = "level";
+    if (trigger_mode_ == LogicTriggerMode::Rising) {
+        trigger_mode = "rising";
+    } else if (trigger_mode_ == LogicTriggerMode::Falling) {
+        trigger_mode = "falling";
+    }
     snprintf(out, out_len,
-             "\"logic\":{\"configured\":%s,\"running\":%s,\"complete\":%s,\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"words\":%lu,\"record_bits\":%lu,\"trigger_pin\":%d,\"trigger_level\":%s,\"buffer_words_max\":%u,\"buffer_bytes\":%u,\"chunk_bytes\":%u}",
+             "\"logic\":{\"configured\":%s,\"running\":%s,\"complete\":%s,\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"words\":%lu,\"record_bits\":%lu,\"trigger_pin\":%d,\"trigger_mode\":\"%s\",\"trigger_level\":%s,\"buffer_words_max\":%u,\"buffer_bytes\":%u,\"chunk_bytes\":%u}",
              configured_ ? "true" : "false",
              running_ ? "true" : "false",
              complete_ ? "true" : "false",
@@ -235,6 +253,7 @@ void LogicAnalyzer::status_json(char *out, size_t out_len) const {
              static_cast<unsigned long>(capture_words_),
              static_cast<unsigned long>(bits_packed_per_word(pin_count_ == 0 ? 1 : pin_count_)),
              trigger_pin_,
+             trigger_mode,
              trigger_level_ ? "true" : "false",
              static_cast<unsigned>(kLogicCaptureWords),
              static_cast<unsigned>(kLogicCaptureWords * sizeof(uint32_t)),
@@ -320,6 +339,9 @@ void LogicAnalyzer::release_runtime() {
 }
 
 void LogicAnalyzer::release_pins() {
+    for (uint8_t i = 0; i < pin_count_; ++i) {
+        gpio_deinit(pin_base_ + i);
+    }
     pins_.release_channel(kOwnerId);
 }
 

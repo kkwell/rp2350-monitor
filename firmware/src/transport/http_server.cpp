@@ -465,7 +465,7 @@ void HttpServer::send_response(Client &client, int code, const char *reason, con
 void HttpServer::build_status_json(char *out, size_t out_len) const {
     static char wifi[1800];
     static char channels[1600];
-    char logic[420];
+    char logic[520];
     char buffers[1800];
     wifi_.status_json(wifi, sizeof(wifi));
     channels_.list_json(channels, sizeof(channels));

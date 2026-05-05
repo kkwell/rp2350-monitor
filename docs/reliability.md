@@ -9,7 +9,7 @@ the same live telemetry path plus per-channel replay buffers.
 Current measured firmware size:
 
 ```text
-text 486144 bytes
+text 486512 bytes
 bss  402592 bytes
 ```
 
@@ -119,6 +119,8 @@ state machine and DMA channel when the capture completes. The host then uses
 This design gives high-speed digital input a deterministic memory ceiling and
 prevents large captures from overwriting recent UART/SPI/I2C/GPIO events. It is
 a capture-then-upload instrument in this version, not an unbounded live stream.
+GPIOs are deinitialized when `logic_release` frees the capture pins, which avoids
+leaving released pins in the PIO function after a capture session.
 
 Logic analyzer status is available through `status`, HTTP `GET /api/status`,
 and `logic_status`. Important fields:
@@ -144,6 +146,9 @@ and `logic_status`. Important fields:
   required word count and maximum word count in the response.
 - Logic analyzer runtime resource conflict: `logic_start` fails if PIO2 or DMA
   cannot be claimed; already claimed GPIOs are rejected during `logic_config`.
+- Logic analyzer trigger timeout: host `logic_capture` returns non-zero and
+  sends `logic_stop` when the configured level/edge trigger is not observed
+  within `--wait-timeout`.
 - Invalid command payloads: command responses return `ok:false` with a clear
   `msg`; they are not added to the telemetry queue.
 - Wi-Fi connection failure: AP recovery is started and per-profile
@@ -164,7 +169,11 @@ For high-speed or continuous passive sniffing, the host software should:
 
 For high-speed logic captures, host software should:
 
-1. Call `logic_status` until `complete:true`.
-2. Use `logic_read --count-words 0` or page by `offset_words`.
-3. Store every `type:"logic"` JSON line before decoding.
-4. Treat a new `logic_start` as destructive to the previous capture buffer.
+1. Use `logic_capture --output capture.jsonl` when a complete raw artifact is
+   needed.
+2. Call `logic_status` until `complete:true` if controlling the low-level
+   commands directly.
+3. Use `logic_read --count-words 0` or page by `offset_words`.
+4. Store every `type:"logic"` JSON line before decoding.
+5. Decode offline with `logic_decode`; keep expensive analysis on the host.
+6. Treat a new `logic_start` as destructive to the previous capture buffer.

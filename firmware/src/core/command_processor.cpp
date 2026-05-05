@@ -58,7 +58,7 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         static char wifi[1800];
         static char channels[1600];
         char buffers[1800];
-        char logic[420];
+        char logic[520];
         static char extra[6400];
         wifi_.status_json(wifi, sizeof(wifi));
         channels_.list_json(channels, sizeof(channels));
@@ -357,6 +357,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         int trigger_pin = -1;
         uint32_t sample_rate = 1000000;
         uint32_t samples = 1024;
+        LogicTriggerMode trigger_mode = LogicTriggerMode::Level;
         bool trigger_level = true;
         if (!json_get_int(line, "pin_base", pin_base)) {
             json_get_int(line, "base", pin_base);
@@ -368,6 +369,19 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         json_get_uint32(line, "rate", sample_rate);
         json_get_uint32(line, "samples", samples);
         json_get_int(line, "trigger_pin", trigger_pin);
+        char trigger_mode_text[12];
+        if (json_get_string(line, "trigger_mode", trigger_mode_text, sizeof(trigger_mode_text))) {
+            if (std::strcmp(trigger_mode_text, "level") == 0) {
+                trigger_mode = LogicTriggerMode::Level;
+            } else if (std::strcmp(trigger_mode_text, "rising") == 0 || std::strcmp(trigger_mode_text, "rise") == 0) {
+                trigger_mode = LogicTriggerMode::Rising;
+            } else if (std::strcmp(trigger_mode_text, "falling") == 0 || std::strcmp(trigger_mode_text, "fall") == 0) {
+                trigger_mode = LogicTriggerMode::Falling;
+            } else {
+                events_.publish_response(reply, false, cmd, "invalid logic trigger_mode");
+                return;
+            }
+        }
         read_boolish(line, "trigger_level", trigger_level);
         if (pin_base < 0 || pin_count <= 0) {
             events_.publish_response(reply, false, cmd, "missing pin_base or pin_count");
@@ -378,10 +392,11 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
                               sample_rate,
                               samples,
                               trigger_pin,
+                              trigger_mode,
                               trigger_level,
                               err,
                               sizeof(err));
-        char extra[420];
+        char extra[520];
         logic_.status_json(extra, sizeof(extra));
         events_.publish_response(reply, ok, cmd, ok ? "logic configured" : err, ok ? extra : nullptr);
         return;
@@ -402,7 +417,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         return;
     }
     if (std::strcmp(cmd, "logic_status") == 0) {
-        char extra[420];
+        char extra[520];
         logic_.status_json(extra, sizeof(extra));
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;
