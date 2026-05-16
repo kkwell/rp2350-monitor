@@ -9,8 +9,8 @@ the same live telemetry path plus per-channel replay buffers.
 Current measured firmware size:
 
 ```text
-text 487688 bytes
-bss  402592 bytes
+text 492064 bytes
+bss  402696 bytes
 ```
 
 `text` lives in flash. `bss` is static SRAM and includes lwIP buffers, device
@@ -31,6 +31,7 @@ compile time:
   bytes of static SRAM.
 - Logic analyzer upload chunk: `kLogicUploadChunkBytes = 512` bytes per JSON
   bulk line before hex expansion.
+- Logic analyzer burst marker storage: `kLogicBurstMarksMax = 16` samples.
 
 ## Event Queues
 
@@ -132,10 +133,15 @@ and `logic_status`. Important fields:
 - `logic.record_bits`: number of valid packed bits per 32-bit word.
 - `logic.pull`: analyzer input bias for the current configuration, one of
   `none`, `up`, or `down`.
+- `logic.pre_samples` / `logic.post_samples`: requested trigger window shape.
+- `logic.search_samples`: maximum SRAM-backed trigger search window.
+- `logic.trigger_found` / `logic.trigger_sample`: trigger scan result.
+- `logic.burst_found`: number of burst markers captured.
 
 Use `logic_caps` before allocating host-side storage or presenting a capture
 configuration UI. It is the stable source for buffer size, upload chunk size,
-supported trigger modes, supported pull modes, and reserved features.
+supported capture modes, trigger modes, supported pull modes, and reserved
+features.
 
 ## Failure Cases
 
@@ -152,9 +158,9 @@ supported trigger modes, supported pull modes, and reserved features.
   required word count and maximum word count in the response.
 - Logic analyzer runtime resource conflict: `logic_start` fails if PIO2 or DMA
   cannot be claimed; already claimed GPIOs are rejected during `logic_config`.
-- Logic analyzer trigger timeout: host `logic_capture` returns non-zero and
-  sends `logic_stop` when the configured level/edge trigger is not observed
-  within `--wait-timeout`.
+- Logic analyzer trigger timeout or no-match search: host `logic_capture`
+  returns non-zero. With `--release`, the CLI releases analyzer pins even when
+  firmware reports `trigger not found`.
 - Invalid command payloads: command responses return `ok:false` with a clear
   `msg`; they are not added to the telemetry queue.
 - Wi-Fi connection failure: AP recovery is started and per-profile
@@ -180,6 +186,6 @@ For high-speed logic captures, host software should:
 2. Call `logic_status` until `complete:true` if controlling the low-level
    commands directly.
 3. Use `logic_read --count-words 0` or page by `offset_words`.
-4. Store every `type:"logic"` JSON line before decoding.
+4. Store `type:"logic_meta"` and every `type:"logic"` JSON line before decoding.
 5. Decode offline with `logic_decode`; keep expensive analysis on the host.
 6. Treat a new `logic_start` as destructive to the previous capture buffer.

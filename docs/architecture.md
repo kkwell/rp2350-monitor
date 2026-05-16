@@ -39,7 +39,7 @@ Host tooling:
 tools/rpmon_cli.py
 ├── device control          USB/TCP JSON commands
 ├── logic_capture           configure, start, wait, read, and persist JSONL
-├── logic_decode            summary, edges, UART, SPI, and I2C analysis
+├── logic_decode            summary, bursts, edges, UART, SPI, and I2C analysis
 └── logic_export            CSV and VCD conversion
 ```
 
@@ -103,10 +103,13 @@ Flow:
 3. PIO executes a single `in pins, n` instruction at the requested sample rate
    and autopushes packed samples into the RX FIFO.
 4. DMA copies RX FIFO words into the fixed SRAM capture buffer.
-5. Completion is reported as a status event; runtime PIO/DMA resources are
+5. For `pre_samples`, `trigger_mode:"pattern"`, or `burst_count > 1`, firmware
+   scans completed DMA words, records trigger/burst sample markers, and uploads
+   a bounded window from the SRAM-backed search stream.
+6. Completion is reported as a status event; runtime PIO/DMA resources are
    released while the capture buffer stays available.
-6. `logic_read` uploads `type:"logic"` JSONL chunks over the active USB or TCP
-   transport.
+7. `logic_read` uploads a `type:"logic_meta"` line plus `type:"logic"` JSONL
+   chunks over the active USB or TCP transport.
 
 The implementation follows the same design pattern as Raspberry Pi's
 `pico-examples/pio/logic_analyser` example: PIO handles deterministic sampling,
@@ -184,7 +187,7 @@ PIO options:
 - Passive SPI/I2C sniffers that decode into normal `EventBus` events.
 - Custom single-wire or timing-sensitive protocol capture.
 - Triggered GPIO edge capture with timestamped events.
-- Larger continuous capture modes using chained DMA buffers or external host
-  backpressure once the required transport throughput is defined.
+- Larger continuous capture modes using chained DMA buffers, external PSRAM, or
+  host backpressure once the required transport throughput is defined.
 
 When adding PIO engines, keep them under a separate driver module and feed normalized events through `EventBus`.

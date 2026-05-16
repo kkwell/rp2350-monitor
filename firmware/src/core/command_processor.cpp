@@ -88,7 +88,7 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         static char wifi[1800];
         static char channels[1600];
         char buffers[1800];
-        char logic[520];
+        char logic[1100];
         static char extra[6400];
         wifi_.status_json(wifi, sizeof(wifi));
         channels_.list_json(channels, sizeof(channels));
@@ -388,6 +388,12 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         int trigger_pin = -1;
         uint32_t sample_rate = 1000000;
         uint32_t samples = 1024;
+        uint32_t pre_samples = 0;
+        uint32_t post_samples = 0;
+        uint32_t search_samples = 0;
+        uint32_t trigger_mask = 0;
+        uint32_t trigger_value = 0;
+        uint32_t burst_count = 1;
         LogicTriggerMode trigger_mode = LogicTriggerMode::Level;
         LogicPullMode pull_mode = LogicPullMode::None;
         bool trigger_level = true;
@@ -409,12 +415,22 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
                 trigger_mode = LogicTriggerMode::Rising;
             } else if (std::strcmp(trigger_mode_text, "falling") == 0 || std::strcmp(trigger_mode_text, "fall") == 0) {
                 trigger_mode = LogicTriggerMode::Falling;
+            } else if (std::strcmp(trigger_mode_text, "pattern") == 0 ||
+                       std::strcmp(trigger_mode_text, "complex") == 0 ||
+                       std::strcmp(trigger_mode_text, "fast") == 0) {
+                trigger_mode = LogicTriggerMode::Pattern;
             } else {
                 events_.publish_response(reply, false, cmd, "invalid logic trigger_mode");
                 return;
             }
         }
         read_boolish(line, "trigger_level", trigger_level);
+        json_get_uint32(line, "pre_samples", pre_samples);
+        json_get_uint32(line, "post_samples", post_samples);
+        json_get_uint32(line, "search_samples", search_samples);
+        json_get_uint32(line, "trigger_mask", trigger_mask);
+        json_get_uint32(line, "trigger_value", trigger_value);
+        json_get_uint32(line, "burst_count", burst_count);
         if (!read_logic_pull_mode(line, pull_mode)) {
             events_.publish_response(reply, false, cmd, "invalid logic pull mode");
             return;
@@ -431,9 +447,15 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
                               trigger_mode,
                               trigger_level,
                               pull_mode,
+                              pre_samples,
+                              post_samples,
+                              search_samples,
+                              trigger_mask,
+                              trigger_value,
+                              static_cast<uint8_t>(burst_count),
                               err,
                               sizeof(err));
-        char extra[520];
+        char extra[1100];
         logic_.status_json(extra, sizeof(extra));
         events_.publish_response(reply, ok, cmd, ok ? "logic configured" : err, ok ? extra : nullptr);
         return;
@@ -454,7 +476,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         return;
     }
     if (std::strcmp(cmd, "logic_status") == 0) {
-        char extra[520];
+        char extra[1100];
         logic_.status_json(extra, sizeof(extra));
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;

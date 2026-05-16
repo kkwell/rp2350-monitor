@@ -32,8 +32,8 @@ Comparison against the local reference project:
 | Capture settings | Settings file can drive terminal capture | `logic_capture --settings` reads JSON and stores a `logic_settings` line in the output JSONL |
 | Channel labels | GUI supports channel names | `--channel-name GPIO=NAME` and settings `channel_names` are preserved; CSV/VCD/summary use labels |
 | Region analysis | Viewer can measure selected regions | `logic_decode` and `logic_export` support `--start-sample` / `--end-sample` windows |
-| Protocol decode | Sigrok-oriented GUI decoder ecosystem | CLI-native JSON decoders for summary, edges, UART, SPI, and I2C; Sigrok bridge remains an extension point |
-| Trigger modes | Simple/complex trigger plus burst in firmware | No trigger, level, rising, falling; pattern/pre-trigger/burst remain reserved |
+| Protocol decode | Sigrok-oriented GUI decoder ecosystem | CLI-native JSON decoders for summary, bursts, edges, UART, SPI, and I2C; Sigrok bridge remains an extension point |
+| Trigger modes | Simple/complex trigger plus burst in firmware | No trigger, level, rising, falling, pattern, pre-trigger windowing, and burst markers |
 
 ## Current RP2350 Monitor Behavior
 
@@ -41,8 +41,10 @@ Firmware responsibilities:
 
 - Claim a contiguous exposed GPIO range.
 - Arm PIO2 and DMA for fixed-rate sampling.
-- Support no trigger, level trigger, rising edge trigger, and falling edge
-  trigger.
+- Support no trigger, level trigger, rising edge trigger, falling edge trigger,
+  and pattern trigger.
+- Support pre-trigger windows and burst trigger markers through PIO/DMA
+  continuous sampling plus firmware trigger scanning.
 - Optionally apply `pull:"none"`, `pull:"up"`, or `pull:"down"` to captured
   inputs before PIO takes ownership.
 - Store packed samples in a fixed 131,072-byte SRAM buffer.
@@ -56,6 +58,7 @@ Host responsibilities:
   `type:"logic_settings"` metadata in the saved JSONL.
 - `logic_decode --decoder summary`: metadata plus per-pin edge/frequency/duty
   measurements.
+- `logic_decode --decoder bursts`: trigger and burst marker timeline.
 - `logic_decode --decoder edges`: edge timeline.
 - `logic_decode --decoder uart`: UART bytes and frame/parity errors.
 - `logic_decode --decoder spi`: SPI words for modes 0..3.
@@ -94,8 +97,12 @@ Settings-file capture:
   "pin_count": 4,
   "sample_rate": 10000000,
   "samples": 4096,
+  "pre_samples": 512,
+  "post_samples": 3584,
+  "search_samples": 32768,
+  "burst_count": 4,
   "pull": "down",
-  "trigger": {"pin": 16, "mode": "rising", "level": true},
+  "trigger": {"mode": "pattern", "mask": "0x3", "value": "0x2"},
   "channel_names": {"16": "uart_rx", "17": "uart_tx", "18": "sck", "19": "mosi"}
 }
 ```
@@ -103,13 +110,11 @@ Settings-file capture:
 ```sh
 python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --settings logic_settings.json --output capture.jsonl --release
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary --start-sample 100 --end-sample 2100
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder bursts
 python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format csv --output region.csv --start-sample 100 --end-sample 2100
 ```
 
 ## Extension Points
 
-- Pattern trigger in firmware using a second PIO state machine.
-- Pre-trigger capture using circular DMA and trigger-tail reconstruction.
-- Burst capture for repeated trigger windows.
 - Optional Sigrok bridge on the host for long-tail protocol decoders.
 - Larger buffers on RP2350 boards with external PSRAM.

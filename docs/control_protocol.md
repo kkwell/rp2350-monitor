@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.6.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.7.0","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -350,12 +350,14 @@ Response:
     "buffer_bytes": 131072,
     "upload_chunk_bytes": 512,
     "encoding": "u32-le-packed",
-    "capture_mode": "capture_then_upload",
-    "triggers": ["none", "level", "rising", "falling"],
+    "capture_modes": ["single", "pretrigger", "burst"],
+    "triggers": ["none", "level", "rising", "falling", "pattern"],
     "pull_modes": ["none", "up", "down"],
-    "host_decoders": ["summary", "edges", "uart", "spi", "i2c"],
+    "pattern_mask_bits_max": 23,
+    "burst_marks_max": 16,
+    "host_decoders": ["summary", "bursts", "edges", "uart", "spi", "i2c"],
     "host_exports": ["csv", "vcd"],
-    "reserved_features": ["pattern_trigger", "pretrigger", "burst", "external_psram"]
+    "reserved_features": ["external_psram", "sigrok_bridge"]
   }
 }
 ```
@@ -379,6 +381,40 @@ then the requested edge.
 {"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"trigger_pin":16,"trigger_mode":"rising"}
 ```
 
+Advanced capture fields:
+
+- `pre_samples`: samples to keep before the first trigger. Non-zero values use
+  PIO/DMA continuous sampling and firmware-side trigger scanning.
+- `post_samples`: samples expected after a trigger. If omitted, the host should
+  treat `samples - pre_samples` as the post window.
+- `search_samples`: maximum samples to scan while waiting for a trigger. `0`
+  lets firmware use the largest SRAM-backed search window that fits.
+- `burst_count`: requested repeated trigger marks, capped by
+  `logic_caps.burst_marks_max`.
+- `trigger_mode:"pattern"`: match a bit pattern in the captured contiguous pin
+  group. Bit 0 maps to `pin_base`, bit 1 maps to `pin_base + 1`, and so on.
+- `trigger_mask`: relative pin mask for pattern matching.
+- `trigger_value`: relative pin value after applying `trigger_mask`.
+
+Pattern/pre-trigger example:
+
+```json
+{
+  "cmd": "logic_config",
+  "pin_base": 16,
+  "pin_count": 4,
+  "sample_rate": 10000000,
+  "samples": 4096,
+  "pre_samples": 512,
+  "post_samples": 3584,
+  "search_samples": 32768,
+  "trigger_mode": "pattern",
+  "trigger_mask": 3,
+  "trigger_value": 2,
+  "burst_count": 4
+}
+```
+
 Start and poll status:
 
 ```json
@@ -386,11 +422,38 @@ Start and poll status:
 {"cmd":"logic_status"}
 ```
 
-Read captured words. `count_words:0` means "read to the end". The firmware
-sends one or more `type:"logic"` data lines, then a normal command response.
+Read captured words. `count_words:0` means "read to the end". For reads from
+offset zero, the firmware sends one `type:"logic_meta"` line first, then one or
+more `type:"logic"` data lines, then a normal command response.
 
 ```json
 {"cmd":"logic_read","offset_words":0,"count_words":0}
+```
+
+Metadata line:
+
+```json
+{
+  "type": "logic_meta",
+  "capture_id": 7,
+  "pin_base": 16,
+  "pin_count": 4,
+  "sample_rate": 10000000,
+  "samples": 4096,
+  "record_bits": 32,
+  "sample_offset": 1024,
+  "pre_samples": 512,
+  "post_samples": 3584,
+  "trigger_found": true,
+  "trigger_sample": 1536,
+  "trigger_pin": -1,
+  "trigger_mode": "pattern",
+  "trigger_mask": 3,
+  "trigger_value": 2,
+  "burst_count": 4,
+  "burst_found": 2,
+  "burst_samples": [1536, 2200]
+}
 ```
 
 Release pins and runtime configuration:
@@ -407,6 +470,8 @@ Data encoding:
 - The hex payload is little-endian `uint32_t` words copied from the capture
   buffer.
 - To decode a pin level, use relative pin index `pin = gpio - pin_base`,
+  `sample` is relative to the uploaded window. Add `logic_meta.sample_offset`
+  to recover the sample number in the original search stream, then compute
   `bit_index = pin + sample * pin_count`, `word_index = bit_index / record_bits`,
   and bit mask `1u << ((bit_index % record_bits) + 32 - record_bits)`.
 
@@ -419,6 +484,7 @@ Host-side logic analysis:
 ```sh
 python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 4096 --output capture.jsonl --release
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder bursts
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder edges --pin 16
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder uart --rx-pin 16 --baud 115200
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder spi --cs-pin 16 --sck-pin 17 --mosi-pin 18 --miso-pin 19 --mode 0
@@ -438,8 +504,12 @@ capture intent:
   "pin_count": 4,
   "sample_rate": 10000000,
   "samples": 4096,
+  "pre_samples": 512,
+  "post_samples": 3584,
+  "search_samples": 32768,
+  "burst_count": 4,
   "pull": "down",
-  "trigger": {"pin": 16, "mode": "rising", "level": true},
+  "trigger": {"mode": "pattern", "mask": "0x3", "value": "0x2"},
   "channel_names": {"16": "uart_rx", "17": "uart_tx"}
 }
 ```
@@ -453,6 +523,7 @@ python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format csv --out
 `logic_decode` emits newline-delimited JSON. Initial built-in decoders cover:
 
 - `summary`: capture metadata and per-pin high/low/edge/frequency statistics.
+- `bursts`: trigger/burst marker list from `logic_meta.burst_samples`.
 - `edges`: rising/falling edge list for selected pins.
 - `uart`: async UART, default 8N1, LSB-first data.
 - `spi`: SPI modes 0..3, optional CS, MOSI/MISO, MSB/LSB word assembly.

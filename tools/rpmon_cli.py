@@ -299,7 +299,7 @@ def _int_setting(settings: Dict[str, Any], key: str, default: Optional[int]) -> 
     value = _setting(settings, key, default)
     if value is None:
         return None
-    return int(value)
+    return int(str(value), 0)
 
 
 def _bool_setting(settings: Dict[str, Any], key: str, default: Optional[bool]) -> Optional[bool]:
@@ -365,6 +365,10 @@ def build_logic_capture_config(args: argparse.Namespace) -> tuple[Dict[str, Any]
     sample_rate = args.sample_rate if args.sample_rate is not None else _int_setting(settings, "sample_rate", 1_000_000)
     samples = args.samples if args.samples is not None else _int_setting(settings, "samples", 1024)
     pull = args.pull if args.pull is not None else str(settings.get("pull", "none"))
+    pre_samples = args.pre_samples if args.pre_samples is not None else _int_setting(settings, "pre_samples", 0)
+    post_samples = args.post_samples if args.post_samples is not None else _int_setting(settings, "post_samples", 0)
+    search_samples = args.search_samples if args.search_samples is not None else _int_setting(settings, "search_samples", 0)
+    burst_count = args.burst_count if args.burst_count is not None else _int_setting(settings, "burst_count", 1)
 
     trigger_pin = args.trigger_pin
     if trigger_pin is None:
@@ -375,6 +379,18 @@ def build_logic_capture_config(args: argparse.Namespace) -> tuple[Dict[str, Any]
     trigger_mode = args.trigger_mode
     if trigger_mode is None:
         trigger_mode = str(settings.get("trigger_mode", trigger.get("mode", "level")))
+
+    trigger_mask = args.trigger_mask
+    if trigger_mask is None:
+        trigger_mask = _int_setting(settings, "trigger_mask", None)
+    if trigger_mask is None and trigger:
+        trigger_mask = _int_setting(trigger, "mask", None)
+
+    trigger_value = args.trigger_value
+    if trigger_value is None:
+        trigger_value = _int_setting(settings, "trigger_value", None)
+    if trigger_value is None and trigger:
+        trigger_value = _int_setting(trigger, "value", None)
 
     trigger_level = bool(args.trigger_level) if args.trigger_level is not None else _bool_setting(settings, "trigger_level", None)
     if trigger_level is None and trigger:
@@ -389,11 +405,21 @@ def build_logic_capture_config(args: argparse.Namespace) -> tuple[Dict[str, Any]
         "sample_rate": int(sample_rate),
         "samples": int(samples),
         "pull": pull,
+        "pre_samples": int(pre_samples or 0),
+        "post_samples": int(post_samples or 0),
+        "search_samples": int(search_samples or 0),
+        "burst_count": int(burst_count or 1),
     }
     if trigger_pin is not None:
         config["trigger_pin"] = int(trigger_pin)
         config["trigger_mode"] = trigger_mode
         config["trigger_level"] = bool(trigger_level)
+    elif trigger_mode == "pattern":
+        config["trigger_mode"] = trigger_mode
+    if trigger_mask is not None:
+        config["trigger_mask"] = int(trigger_mask)
+    if trigger_value is not None:
+        config["trigger_value"] = int(trigger_value)
 
     metadata = {key: value for key, value in config.items() if key != "cmd"}
     channel_names = parse_channel_names(settings, args.channel_name)
@@ -440,6 +466,8 @@ def logic_capture_workflow(
                     if complete:
                         break
                     if not running and not complete:
+                        if args.release:
+                            expect_response_to_files(transport, {"cmd": "logic_release"}, args.timeout, logs)
                         return 2
             if complete:
                 break
@@ -593,11 +621,21 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
             "sample_rate": args.sample_rate,
             "samples": args.samples,
             "pull": args.pull,
+            "pre_samples": args.pre_samples,
+            "post_samples": args.post_samples,
+            "search_samples": args.search_samples,
+            "burst_count": args.burst_count,
         }
         if args.trigger_pin is not None:
             payload["trigger_pin"] = args.trigger_pin
             payload["trigger_mode"] = args.trigger_mode
             payload["trigger_level"] = bool(args.trigger_level)
+        elif args.trigger_mode == "pattern":
+            payload["trigger_mode"] = args.trigger_mode
+        if args.trigger_mask is not None:
+            payload["trigger_mask"] = args.trigger_mask
+        if args.trigger_value is not None:
+            payload["trigger_value"] = args.trigger_value
         return payload
     if cmd == "logic_read":
         return {"cmd": "logic_read", "offset_words": args.offset_words, "count_words": args.count_words}
@@ -710,9 +748,15 @@ def build_parser() -> argparse.ArgumentParser:
     logic_config.add_argument("--sample-rate", type=int, default=1_000_000)
     logic_config.add_argument("--samples", type=int, default=1024)
     logic_config.add_argument("--trigger-pin", type=int)
-    logic_config.add_argument("--trigger-mode", choices=["level", "rising", "falling"], default="level")
+    logic_config.add_argument("--trigger-mode", choices=["level", "rising", "falling", "pattern"], default="level")
     logic_config.add_argument("--trigger-level", type=int, choices=[0, 1], default=1)
     logic_config.add_argument("--pull", choices=["none", "up", "down"], default="none")
+    logic_config.add_argument("--pre-samples", type=int, default=0)
+    logic_config.add_argument("--post-samples", type=int, default=0)
+    logic_config.add_argument("--search-samples", type=int, default=0)
+    logic_config.add_argument("--trigger-mask", type=lambda value: int(value, 0))
+    logic_config.add_argument("--trigger-value", type=lambda value: int(value, 0))
+    logic_config.add_argument("--burst-count", type=int, default=1)
 
     sub.add_parser("logic_start")
     sub.add_parser("logic_stop")
@@ -731,8 +775,14 @@ def build_parser() -> argparse.ArgumentParser:
     logic_capture.add_argument("--sample-rate", type=int)
     logic_capture.add_argument("--samples", type=int)
     logic_capture.add_argument("--trigger-pin", type=int)
-    logic_capture.add_argument("--trigger-mode", choices=["level", "rising", "falling"])
+    logic_capture.add_argument("--trigger-mode", choices=["level", "rising", "falling", "pattern"])
     logic_capture.add_argument("--trigger-level", type=int, choices=[0, 1])
+    logic_capture.add_argument("--pre-samples", type=int)
+    logic_capture.add_argument("--post-samples", type=int)
+    logic_capture.add_argument("--search-samples", type=int)
+    logic_capture.add_argument("--trigger-mask", type=lambda value: int(value, 0))
+    logic_capture.add_argument("--trigger-value", type=lambda value: int(value, 0))
+    logic_capture.add_argument("--burst-count", type=int)
     logic_capture.add_argument("--pull", choices=["none", "up", "down"])
     logic_capture.add_argument("--channel-name", action="append", help="Attach a capture label as GPIO=NAME; repeatable")
     logic_capture.add_argument("--output", required=True, help="Write raw logic JSONL capture")
@@ -744,7 +794,7 @@ def build_parser() -> argparse.ArgumentParser:
     logic_decode = sub.add_parser("logic_decode")
     logic_decode.add_argument("--input", required=True)
     logic_decode.add_argument("--capture-id", type=int)
-    logic_decode.add_argument("--decoder", choices=["summary", "edges", "uart", "spi", "i2c"], default="summary")
+    logic_decode.add_argument("--decoder", choices=["summary", "bursts", "edges", "uart", "spi", "i2c"], default="summary")
     logic_decode.add_argument("--output")
     logic_decode.add_argument("--start-sample", type=int)
     logic_decode.add_argument("--end-sample", type=int)

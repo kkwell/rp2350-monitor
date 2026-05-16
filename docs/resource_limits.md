@@ -46,6 +46,10 @@ firmware limits:
   other channel ownership.
 - Logic analyzer `pull` must be `none`, `up`, or `down`; invalid values return
   `invalid logic pull mode`.
+- Pattern trigger masks and values are relative to the captured contiguous pin
+  range and cannot exceed `pin_count` bits.
+- `burst_count` is capped by `kLogicBurstMarksMax = 16`.
+- `search_samples` must fit the same 32,768-word SRAM capture buffer.
 - If the PIO2 state machine, PIO instruction memory, or a DMA channel cannot be
   claimed, `logic_start` returns `ok:false` with the specific resource name.
 
@@ -75,17 +79,17 @@ High-speed logic analyzer captures use a separate fixed buffer:
   other JSON lines, but they are not copied into the telemetry event queues.
 - `logic_caps` reports the active analyzer limits, including exposed contiguous
   GPIO ranges, sample-rate ceiling, SRAM buffer size, upload chunk size,
-  supported trigger modes, supported pull modes, host decoders, host exports,
-  and reserved features.
+  supported capture modes, trigger modes, pull modes, burst marker capacity,
+  host decoders, host exports, and reserved features.
 
 This keeps high-speed captures from evicting ordinary UART/SPI/I2C/GPIO event
 history. It also means hosts must finish `logic_read` and store the resulting
 JSONL if they need the full capture after another `logic_start`.
 
 Host-side decoding does not consume RP2350 SRAM. `logic_decode` loads the raw
-capture JSONL on the computer and emits decoded JSONL for UART/SPI/I2C, edge
-lists, and timing summaries. Very large CSV/VCD exports are bounded by host disk
-space rather than Pico memory.
+capture JSONL on the computer and emits decoded JSONL for burst markers,
+UART/SPI/I2C, edge lists, and timing summaries. Very large CSV/VCD exports are
+bounded by host disk space rather than Pico memory.
 
 The firmware still cannot overcome physical bandwidth limits. Hosts should keep
 USB or TCP reads active and write JSONL to disk when capturing sustained traffic.
@@ -98,11 +102,14 @@ has a gap and the host should mark the analysis as incomplete.
 - SPI and I2C are host-initiated transaction engines in this version. Passive
   bus sniffing is reserved for future PIO drivers.
 - GPIO supports input sampling, output control, and input-change events.
-- Logic analyzer supports triggered fixed-rate sampling of multiple contiguous
-  GPIOs into SRAM, followed by USB/TCP upload.
+- Logic analyzer supports fixed-rate sampling of multiple contiguous GPIOs into
+  SRAM, followed by USB/TCP upload.
 - Logic analyzer can apply optional internal pull-up or pull-down bias to all
   captured pins before PIO sampling. The default is `none`, which is safest for
   driven buses.
-- Logic analyzer trigger modes are level, rising edge, and falling edge. Pattern
-  trigger, pre-trigger circular capture, and burst capture remain firmware
-  extension points.
+- Logic analyzer trigger modes are level, rising edge, falling edge, and pattern
+  trigger. Pattern matching uses `trigger_mask` and `trigger_value` over the
+  captured pin group.
+- Pre-trigger and burst modes use PIO/DMA continuous sampling plus firmware-side
+  trigger scanning. This preserves packed sample data and emits trigger/burst
+  markers, but it is still bounded by the fixed SRAM search window.

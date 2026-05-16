@@ -31,6 +31,16 @@ class LogicCapture:
     words: List[int]
     channel_names: Dict[int, str] = field(default_factory=dict)
     sample_offset: int = 0
+    trigger_found: bool = False
+    trigger_sample: Optional[int] = None
+    trigger_mode: str = "level"
+    trigger_pin: Optional[int] = None
+    trigger_mask: int = 0
+    trigger_value: int = 0
+    pre_samples: int = 0
+    post_samples: int = 0
+    burst_count: int = 1
+    burst_samples: List[int] = field(default_factory=list)
 
     @classmethod
     def from_jsonl(cls, path: str, capture_id: Optional[int] = None) -> "LogicCapture":
@@ -51,6 +61,9 @@ class LogicCapture:
         samples = int(first["samples"])
         record_bits = int(first.get("record_bits", bits_packed_per_word(pin_count)))
         channel_names = collect_channel_names(docs)
+        meta = collect_logic_meta(docs, capture_id)
+        if meta:
+            samples = int(meta.get("samples", samples))
         expected_words = math.ceil((samples * pin_count) / record_bits)
 
         words: List[Optional[int]] = [None] * expected_words
@@ -72,6 +85,7 @@ class LogicCapture:
         if missing:
             raise LogicDecodeError(f"capture is missing {len(missing)} words, first missing word {missing[0]}")
 
+        meta_trigger_pin = int(meta.get("trigger_pin", -1)) if meta else -1
         return cls(
             capture_id=capture_id,
             pin_base=pin_base,
@@ -81,6 +95,17 @@ class LogicCapture:
             record_bits=record_bits,
             words=[int(value) for value in words],
             channel_names=channel_names,
+            sample_offset=int(meta.get("sample_offset", 0)) if meta else 0,
+            trigger_found=bool(meta.get("trigger_found", False)) if meta else False,
+            trigger_sample=int(meta["trigger_sample"]) if meta and meta.get("trigger_found") else None,
+            trigger_mode=str(meta.get("trigger_mode", "level")) if meta else "level",
+            trigger_pin=meta_trigger_pin if meta_trigger_pin >= 0 else None,
+            trigger_mask=int(meta.get("trigger_mask", 0)) if meta else 0,
+            trigger_value=int(meta.get("trigger_value", 0)) if meta else 0,
+            pre_samples=int(meta.get("pre_samples", 0)) if meta else 0,
+            post_samples=int(meta.get("post_samples", 0)) if meta else 0,
+            burst_count=int(meta.get("burst_count", 1)) if meta else 1,
+            burst_samples=[int(value) for value in meta.get("burst_samples", [])] if meta else [],
         )
 
     @property
@@ -129,6 +154,11 @@ class LogicCapture:
             return self
         start = 0 if start_sample is None else int(start_sample)
         end = self.samples if end_sample is None else int(end_sample)
+        if self.sample_offset and (start_sample is not None or end_sample is not None):
+            if start_sample is not None and start >= self.sample_offset:
+                start -= self.sample_offset
+            if end_sample is not None and end > self.sample_offset:
+                end -= self.sample_offset
         if start < 0 or end < 0 or start >= end or end > self.samples:
             raise LogicDecodeError(f"invalid sample window {start}..{end}, capture has {self.samples} samples")
         if start == 0 and end == self.samples:
@@ -157,6 +187,16 @@ class LogicCapture:
             words=words,
             channel_names=dict(self.channel_names),
             sample_offset=self.sample_offset + start,
+            trigger_found=self.trigger_found,
+            trigger_sample=self.trigger_sample,
+            trigger_mode=self.trigger_mode,
+            trigger_pin=self.trigger_pin,
+            trigger_mask=self.trigger_mask,
+            trigger_value=self.trigger_value,
+            pre_samples=self.pre_samples,
+            post_samples=self.post_samples,
+            burst_count=self.burst_count,
+            burst_samples=[sample for sample in self.burst_samples if self.sample_offset + start <= sample < self.sample_offset + end],
         )
 
     def iter_edges(self, pin: int) -> Iterator[JsonDoc]:
@@ -216,6 +256,14 @@ def collect_channel_names(docs: Iterable[JsonDoc]) -> Dict[int, str]:
     return names
 
 
+def collect_logic_meta(docs: Iterable[JsonDoc], capture_id: int) -> JsonDoc:
+    meta: JsonDoc = {}
+    for doc in docs:
+        if doc.get("type") == "logic_meta" and int(doc.get("capture_id", -1)) == capture_id:
+            meta = doc
+    return meta
+
+
 def write_json_docs(docs: Iterable[JsonDoc], out: TextIO) -> None:
     for doc in docs:
         out.write(json.dumps(doc, separators=(",", ":")) + "\n")
@@ -235,9 +283,31 @@ def capture_summary(capture: LogicCapture) -> Iterator[JsonDoc]:
         "duration_us": capture.duration_us,
         "record_bits": capture.record_bits,
         "words": len(capture.words),
+        "trigger_found": capture.trigger_found,
+        "trigger_sample": capture.trigger_sample,
+        "trigger_mode": capture.trigger_mode,
+        "trigger_pin": capture.trigger_pin,
+        "trigger_mask": capture.trigger_mask,
+        "trigger_value": capture.trigger_value,
+        "pre_samples": capture.pre_samples,
+        "post_samples": capture.post_samples,
+        "burst_count": capture.burst_count,
+        "burst_samples": capture.burst_samples,
     }
     for pin_index in range(capture.pin_count):
         yield measure_pin(capture, pin_index)
+
+
+def burst_markers(capture: LogicCapture) -> Iterator[JsonDoc]:
+    for index, sample in enumerate(capture.burst_samples):
+        yield {
+            "type": "logic_burst",
+            "capture_id": capture.capture_id,
+            "index": index,
+            "sample": sample,
+            "t_us": sample * 1_000_000.0 / capture.sample_rate if capture.sample_rate else 0.0,
+            "relative_sample": sample - capture.sample_offset,
+        }
 
 
 def measure_pin(capture: LogicCapture, pin_index: int) -> JsonDoc:
@@ -651,6 +721,8 @@ def decode_command(args: Any) -> int:
         docs: Iterable[JsonDoc]
         if args.decoder == "summary":
             docs = capture_summary(capture)
+        elif args.decoder == "bursts":
+            docs = burst_markers(capture)
         elif args.decoder == "edges":
             pins = args.pin if args.pin else list(range(capture.pin_base, capture.pin_base + capture.pin_count))
             docs = (edge for pin in pins for edge in capture.iter_edges(pin))
