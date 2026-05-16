@@ -353,6 +353,54 @@ def parse_channel_names(settings: Dict[str, Any], overrides: Optional[list[str]]
     return names
 
 
+def normalize_logic_pull(value: Any) -> str:
+    text = str(value).strip().lower()
+    aliases = {
+        "off": "none",
+        "pullup": "up",
+        "pull-up": "up",
+        "pulldown": "down",
+        "pull-down": "down",
+    }
+    text = aliases.get(text, text)
+    if text not in {"none", "up", "down"}:
+        raise SystemExit(f"invalid logic pull value: {value}")
+    return text
+
+
+def parse_logic_pin_pulls(
+    settings: Dict[str, Any],
+    overrides: Optional[list[str]],
+    pin_base: Optional[int] = None,
+    pin_count: Optional[int] = None,
+) -> Dict[str, str]:
+    pulls: Dict[str, str] = {}
+    raw = settings.get("pin_pulls")
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            pulls[str(int(str(key), 0))] = normalize_logic_pull(value)
+    elif raw is not None:
+        raise SystemExit("logic pin_pulls must be a JSON object")
+
+    raw_list = settings.get("pulls")
+    if isinstance(raw_list, list):
+        if pin_base is None:
+            raise SystemExit("settings pulls list requires pin_base")
+        for index, value in enumerate(raw_list):
+            if pin_count is not None and index >= pin_count:
+                raise SystemExit("settings pulls list is longer than pin_count")
+            pulls[str(int(pin_base) + index)] = normalize_logic_pull(value)
+    elif raw_list is not None:
+        raise SystemExit("logic pulls must be a JSON array when provided")
+
+    for item in overrides or []:
+        if "=" not in item:
+            raise SystemExit("--pin-pull must use GPIO=MODE, for example --pin-pull 17=up")
+        key, value = item.split("=", 1)
+        pulls[str(int(key, 0))] = normalize_logic_pull(value)
+    return pulls
+
+
 def build_logic_capture_config(args: argparse.Namespace) -> tuple[Dict[str, Any], Dict[str, Any]]:
     settings = load_logic_settings(args.settings)
     trigger = settings.get("trigger") if isinstance(settings.get("trigger"), dict) else {}
@@ -420,6 +468,9 @@ def build_logic_capture_config(args: argparse.Namespace) -> tuple[Dict[str, Any]
         config["trigger_mask"] = int(trigger_mask)
     if trigger_value is not None:
         config["trigger_value"] = int(trigger_value)
+    pin_pulls = parse_logic_pin_pulls(settings, args.pin_pull, int(pin_base), int(pin_count))
+    if pin_pulls:
+        config["pin_pulls"] = pin_pulls
 
     metadata = {key: value for key, value in config.items() if key != "cmd"}
     channel_names = parse_channel_names(settings, args.channel_name)
@@ -636,6 +687,9 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
             payload["trigger_mask"] = args.trigger_mask
         if args.trigger_value is not None:
             payload["trigger_value"] = args.trigger_value
+        pin_pulls = parse_logic_pin_pulls({}, args.pin_pull, args.pin_base, args.pin_count)
+        if pin_pulls:
+            payload["pin_pulls"] = pin_pulls
         return payload
     if cmd == "logic_read":
         return {"cmd": "logic_read", "offset_words": args.offset_words, "count_words": args.count_words}
@@ -757,6 +811,7 @@ def build_parser() -> argparse.ArgumentParser:
     logic_config.add_argument("--trigger-mask", type=lambda value: int(value, 0))
     logic_config.add_argument("--trigger-value", type=lambda value: int(value, 0))
     logic_config.add_argument("--burst-count", type=int, default=1)
+    logic_config.add_argument("--pin-pull", action="append", help="Override one analyzer input bias as GPIO=none|up|down; repeatable")
 
     sub.add_parser("logic_start")
     sub.add_parser("logic_stop")
@@ -784,6 +839,7 @@ def build_parser() -> argparse.ArgumentParser:
     logic_capture.add_argument("--trigger-value", type=lambda value: int(value, 0))
     logic_capture.add_argument("--burst-count", type=int)
     logic_capture.add_argument("--pull", choices=["none", "up", "down"])
+    logic_capture.add_argument("--pin-pull", action="append", help="Override one analyzer input bias as GPIO=none|up|down; repeatable")
     logic_capture.add_argument("--channel-name", action="append", help="Attach a capture label as GPIO=NAME; repeatable")
     logic_capture.add_argument("--output", required=True, help="Write raw logic JSONL capture")
     logic_capture.add_argument("--wait-timeout", type=float, default=10.0)

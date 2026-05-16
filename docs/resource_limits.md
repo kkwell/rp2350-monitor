@@ -46,6 +46,8 @@ firmware limits:
   other channel ownership.
 - Logic analyzer `pull` must be `none`, `up`, or `down`; invalid values return
   `invalid logic pull mode`.
+- Logic analyzer `pin_pulls` values must be `none`, `up`, or `down`, and keys
+  must point inside the captured GPIO range.
 - Pattern trigger masks and values are relative to the captured contiguous pin
   range and cannot exceed `pin_count` bits.
 - `burst_count` is capped by `kLogicBurstMarksMax = 16`.
@@ -104,9 +106,10 @@ has a gap and the host should mark the analysis as incomplete.
 - GPIO supports input sampling, output control, and input-change events.
 - Logic analyzer supports fixed-rate sampling of multiple contiguous GPIOs into
   SRAM, followed by USB/TCP upload.
-- Logic analyzer can apply optional internal pull-up or pull-down bias to all
-  captured pins before PIO sampling. The default is `none`, which is safest for
-  driven buses.
+- Logic analyzer can apply optional internal pull-up or pull-down bias before
+  PIO sampling. `pull` is the default for all captured pins, and `pin_pulls`
+  overrides individual GPIOs. The default is `none`, which is safest for driven
+  buses.
 - Logic analyzer trigger modes are level, rising edge, falling edge, and pattern
   trigger. Pattern matching uses `trigger_mask` and `trigger_value` over the
   captured pin group.

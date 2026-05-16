@@ -37,6 +37,7 @@ public:
                    LogicTriggerMode trigger_mode,
                    bool trigger_level,
                    LogicPullMode pull_mode,
+                   const LogicPullMode *pin_pull_modes,
                    uint32_t pre_samples,
                    uint32_t post_samples,
                    uint32_t search_samples,
@@ -69,6 +70,7 @@ private:
     bool finish_scanned_capture(char *err, size_t err_len);
     void finish_capture(EventBus *events);
     void append_burst_json(char *out, size_t out_len) const;
+    void append_pin_pulls_json(char *out, size_t out_len) const;
     void release_runtime();
     void release_pins();
     void apply_pin_pulls() const;
@@ -103,6 +105,7 @@ private:
     bool trigger_level_ = true;
     bool trigger_found_ = false;
     LogicPullMode pull_mode_ = LogicPullMode::None;
+    LogicPullMode pin_pull_modes_[32] = {};
     uint8_t burst_count_ = 1;
     uint8_t burst_found_ = 0;
     uint32_t burst_samples_[kLogicBurstMarksMax] = {};

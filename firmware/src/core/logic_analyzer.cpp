@@ -51,6 +51,7 @@ bool LogicAnalyzer::configure(uint8_t pin_base,
                               LogicTriggerMode trigger_mode,
                               bool trigger_level,
                               LogicPullMode pull_mode,
+                              const LogicPullMode *pin_pull_modes,
                               uint32_t pre_samples,
                               uint32_t post_samples,
                               uint32_t search_samples,
@@ -182,6 +183,9 @@ bool LogicAnalyzer::configure(uint8_t pin_base,
     trigger_level_ = trigger_level;
     trigger_found_ = trigger_pin < 0 && trigger_mode != LogicTriggerMode::Pattern;
     pull_mode_ = pull_mode;
+    for (uint8_t i = 0; i < sizeof(pin_pull_modes_) / sizeof(pin_pull_modes_[0]); ++i) {
+        pin_pull_modes_[i] = i < pin_count && pin_pull_modes ? pin_pull_modes[i] : pull_mode;
+    }
     burst_count_ = burst_count;
     burst_found_ = 0;
     std::memset(burst_samples_, 0, sizeof(burst_samples_));
@@ -316,6 +320,9 @@ bool LogicAnalyzer::release(char *err, size_t err_len) {
     trigger_level_ = true;
     trigger_found_ = false;
     pull_mode_ = LogicPullMode::None;
+    for (LogicPullMode &mode : pin_pull_modes_) {
+        mode = LogicPullMode::None;
+    }
     burst_count_ = 1;
     burst_found_ = 0;
     std::memset(burst_samples_, 0, sizeof(burst_samples_));
@@ -365,8 +372,10 @@ void LogicAnalyzer::poll(EventBus &events) {
 }
 
 void LogicAnalyzer::status_json(char *out, size_t out_len) const {
+    char pin_pulls[420];
+    append_pin_pulls_json(pin_pulls, sizeof(pin_pulls));
     snprintf(out, out_len,
-             "\"logic\":{\"configured\":%s,\"running\":%s,\"complete\":%s,\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"words\":%lu,\"record_bits\":%lu,\"search_samples\":%lu,\"pre_samples\":%lu,\"post_samples\":%lu,\"capture_start_sample\":%lu,\"trigger_found\":%s,\"trigger_sample\":%lu,\"trigger_pin\":%d,\"trigger_mode\":\"%s\",\"trigger_level\":%s,\"trigger_mask\":%lu,\"trigger_value\":%lu,\"burst_count\":%u,\"burst_found\":%u,\"pull\":\"%s\",\"buffer_words_max\":%u,\"buffer_bytes\":%u,\"chunk_bytes\":%u}",
+             "\"logic\":{\"configured\":%s,\"running\":%s,\"complete\":%s,\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"words\":%lu,\"record_bits\":%lu,\"search_samples\":%lu,\"pre_samples\":%lu,\"post_samples\":%lu,\"capture_start_sample\":%lu,\"trigger_found\":%s,\"trigger_sample\":%lu,\"trigger_pin\":%d,\"trigger_mode\":\"%s\",\"trigger_level\":%s,\"trigger_mask\":%lu,\"trigger_value\":%lu,\"burst_count\":%u,\"burst_found\":%u,\"pull\":\"%s\",\"pin_pulls\":%s,\"buffer_words_max\":%u,\"buffer_bytes\":%u,\"chunk_bytes\":%u}",
              configured_ ? "true" : "false",
              running_ ? "true" : "false",
              complete_ ? "true" : "false",
@@ -391,6 +400,7 @@ void LogicAnalyzer::status_json(char *out, size_t out_len) const {
              static_cast<unsigned>(burst_count_),
              static_cast<unsigned>(burst_found_),
              logic_pull_name(pull_mode_),
+             pin_pulls,
              static_cast<unsigned>(kLogicCaptureWords),
              static_cast<unsigned>(kLogicCaptureWords * sizeof(uint32_t)),
              static_cast<unsigned>(kLogicUploadChunkBytes));
@@ -398,7 +408,7 @@ void LogicAnalyzer::status_json(char *out, size_t out_len) const {
 
 void LogicAnalyzer::caps_json(char *out, size_t out_len) const {
     snprintf(out, out_len,
-             "\"logic_caps\":{\"engine\":\"pio2_dma\",\"pin_ranges\":[{\"first\":0,\"last\":22},{\"first\":26,\"last\":28}],\"contiguous_pins\":true,\"pin_count_max\":23,\"sample_rate_max\":%lu,\"buffer_words\":%u,\"buffer_bytes\":%u,\"upload_chunk_bytes\":%u,\"encoding\":\"u32-le-packed\",\"capture_modes\":[\"single\",\"pretrigger\",\"burst\"],\"triggers\":[\"none\",\"level\",\"rising\",\"falling\",\"pattern\"],\"pull_modes\":[\"none\",\"up\",\"down\"],\"pattern_mask_bits_max\":23,\"burst_marks_max\":%u,\"host_decoders\":[\"summary\",\"bursts\",\"edges\",\"uart\",\"spi\",\"i2c\"],\"host_exports\":[\"csv\",\"vcd\"],\"reserved_features\":[\"external_psram\",\"sigrok_bridge\"]}",
+             "\"logic_caps\":{\"engine\":\"pio2_dma\",\"pin_ranges\":[{\"first\":0,\"last\":22},{\"first\":26,\"last\":28}],\"contiguous_pins\":true,\"pin_count_max\":23,\"sample_rate_max\":%lu,\"buffer_words\":%u,\"buffer_bytes\":%u,\"upload_chunk_bytes\":%u,\"encoding\":\"u32-le-packed\",\"capture_modes\":[\"single\",\"pretrigger\",\"burst\"],\"triggers\":[\"none\",\"level\",\"rising\",\"falling\",\"pattern\"],\"pull_modes\":[\"none\",\"up\",\"down\"],\"per_pin_pull\":true,\"pin_pull_field\":\"pin_pulls\",\"pattern_mask_bits_max\":23,\"burst_marks_max\":%u,\"host_decoders\":[\"summary\",\"bursts\",\"edges\",\"uart\",\"spi\",\"i2c\"],\"host_exports\":[\"csv\",\"vcd\"],\"reserved_features\":[\"external_psram\",\"sigrok_bridge\"]}",
              static_cast<unsigned long>(clk_sys_hz()),
              static_cast<unsigned>(kLogicCaptureWords),
              static_cast<unsigned>(kLogicCaptureWords * sizeof(uint32_t)),
@@ -418,9 +428,11 @@ bool LogicAnalyzer::stream_capture(LineSink &reply, size_t offset_words, size_t 
     if (offset_words == 0) {
         char bursts[220];
         append_burst_json(bursts, sizeof(bursts));
-        char meta[760];
+        char pin_pulls[420];
+        append_pin_pulls_json(pin_pulls, sizeof(pin_pulls));
+        char meta[1280];
         snprintf(meta, sizeof(meta),
-                 "{\"type\":\"logic_meta\",\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"record_bits\":%lu,\"sample_offset\":%lu,\"pre_samples\":%lu,\"post_samples\":%lu,\"trigger_found\":%s,\"trigger_sample\":%lu,\"trigger_pin\":%d,\"trigger_mode\":\"%s\",\"trigger_mask\":%lu,\"trigger_value\":%lu,\"burst_count\":%u,\"burst_found\":%u,\"burst_samples\":%s}",
+                 "{\"type\":\"logic_meta\",\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"record_bits\":%lu,\"sample_offset\":%lu,\"pull\":\"%s\",\"pin_pulls\":%s,\"pre_samples\":%lu,\"post_samples\":%lu,\"trigger_found\":%s,\"trigger_sample\":%lu,\"trigger_pin\":%d,\"trigger_mode\":\"%s\",\"trigger_mask\":%lu,\"trigger_value\":%lu,\"burst_count\":%u,\"burst_found\":%u,\"burst_samples\":%s}",
                  static_cast<unsigned long>(capture_id_),
                  static_cast<unsigned>(pin_base_),
                  static_cast<unsigned>(pin_count_),
@@ -428,6 +440,8 @@ bool LogicAnalyzer::stream_capture(LineSink &reply, size_t offset_words, size_t 
                  static_cast<unsigned long>(sample_count_),
                  static_cast<unsigned long>(bits_packed_per_word(pin_count_)),
                  static_cast<unsigned long>(capture_start_sample_),
+                 logic_pull_name(pull_mode_),
+                 pin_pulls,
                  static_cast<unsigned long>(pre_samples_),
                  static_cast<unsigned long>(post_samples_),
                  trigger_found_ ? "true" : "false",
@@ -696,6 +710,34 @@ void LogicAnalyzer::append_burst_json(char *out, size_t out_len) const {
     snprintf(out + (pos < out_len ? pos : out_len - 1), pos < out_len ? out_len - pos : 1, "]");
 }
 
+void LogicAnalyzer::append_pin_pulls_json(char *out, size_t out_len) const {
+    if (!out || out_len == 0) {
+        return;
+    }
+    size_t pos = 0;
+    int written = snprintf(out, out_len, "{");
+    if (written < 0) {
+        out[0] = '\0';
+        return;
+    }
+    pos = static_cast<size_t>(written);
+    for (uint8_t i = 0; i < pin_count_; ++i) {
+        written = snprintf(out + pos, pos < out_len ? out_len - pos : 0,
+                           "%s\"%u\":\"%s\"",
+                           i == 0 ? "" : ",",
+                           static_cast<unsigned>(pin_base_ + i),
+                           logic_pull_name(pin_pull_modes_[i]));
+        if (written < 0) {
+            break;
+        }
+        pos += static_cast<size_t>(written);
+        if (pos >= out_len) {
+            break;
+        }
+    }
+    snprintf(out + (pos < out_len ? pos : out_len - 1), pos < out_len ? out_len - pos : 1, "}");
+}
+
 void LogicAnalyzer::release_runtime() {
     if (sm_ >= 0) {
         pio_sm_set_enabled(pio_, static_cast<uint>(sm_), false);
@@ -734,9 +776,9 @@ void LogicAnalyzer::apply_pin_pulls() const {
     for (uint8_t i = 0; i < pin_count_; ++i) {
         uint gpio = pin_base_ + i;
         gpio_disable_pulls(gpio);
-        if (pull_mode_ == LogicPullMode::Up) {
+        if (pin_pull_modes_[i] == LogicPullMode::Up) {
             gpio_pull_up(gpio);
-        } else if (pull_mode_ == LogicPullMode::Down) {
+        } else if (pin_pull_modes_[i] == LogicPullMode::Down) {
             gpio_pull_down(gpio);
         }
     }

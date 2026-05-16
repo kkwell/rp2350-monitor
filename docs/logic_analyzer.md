@@ -45,8 +45,9 @@ Firmware responsibilities:
   and pattern trigger.
 - Support pre-trigger windows and burst trigger markers through PIO/DMA
   continuous sampling plus firmware trigger scanning.
-- Optionally apply `pull:"none"`, `pull:"up"`, or `pull:"down"` to captured
-  inputs before PIO takes ownership.
+- Optionally apply `pull:"none"`, `pull:"up"`, or `pull:"down"` as the default
+  analyzer input bias, with `pin_pulls` per-GPIO overrides before PIO takes
+  ownership.
 - Store packed samples in a fixed 131,072-byte SRAM buffer.
 - Upload raw `type:"logic"` chunks over USB CDC or Wi-Fi TCP.
 - Report machine-readable capture limits through `logic_caps`.
@@ -102,6 +103,7 @@ Settings-file capture:
   "search_samples": 32768,
   "burst_count": 4,
   "pull": "down",
+  "pin_pulls": {"18": "up", "19": "none"},
   "trigger": {"mode": "pattern", "mask": "0x3", "value": "0x2"},
   "channel_names": {"16": "uart_rx", "17": "uart_tx", "18": "sck", "19": "mosi"}
 }

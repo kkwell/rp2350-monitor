@@ -41,6 +41,7 @@ class LogicCapture:
     post_samples: int = 0
     burst_count: int = 1
     burst_samples: List[int] = field(default_factory=list)
+    pin_pulls: Dict[int, str] = field(default_factory=dict)
 
     @classmethod
     def from_jsonl(cls, path: str, capture_id: Optional[int] = None) -> "LogicCapture":
@@ -86,6 +87,7 @@ class LogicCapture:
             raise LogicDecodeError(f"capture is missing {len(missing)} words, first missing word {missing[0]}")
 
         meta_trigger_pin = int(meta.get("trigger_pin", -1)) if meta else -1
+        pin_pulls = collect_pin_pulls(docs, meta, pin_base, pin_count)
         return cls(
             capture_id=capture_id,
             pin_base=pin_base,
@@ -106,6 +108,7 @@ class LogicCapture:
             post_samples=int(meta.get("post_samples", 0)) if meta else 0,
             burst_count=int(meta.get("burst_count", 1)) if meta else 1,
             burst_samples=[int(value) for value in meta.get("burst_samples", [])] if meta else [],
+            pin_pulls=pin_pulls,
         )
 
     @property
@@ -197,6 +200,7 @@ class LogicCapture:
             post_samples=self.post_samples,
             burst_count=self.burst_count,
             burst_samples=[sample for sample in self.burst_samples if self.sample_offset + start <= sample < self.sample_offset + end],
+            pin_pulls=dict(self.pin_pulls),
         )
 
     def iter_edges(self, pin: int) -> Iterator[JsonDoc]:
@@ -264,6 +268,36 @@ def collect_logic_meta(docs: Iterable[JsonDoc], capture_id: int) -> JsonDoc:
     return meta
 
 
+def collect_pin_pulls(docs: Iterable[JsonDoc], meta: JsonDoc, pin_base: int, pin_count: int) -> Dict[int, str]:
+    pulls: Dict[int, str] = {}
+    default_pull = str(meta.get("pull", "none")) if meta else "none"
+    for gpio in range(pin_base, pin_base + pin_count):
+        pulls[gpio] = default_pull
+
+    raw_meta = meta.get("pin_pulls") if meta else None
+    if isinstance(raw_meta, dict):
+        for key, value in raw_meta.items():
+            gpio = int(str(key), 0)
+            if pin_base <= gpio < pin_base + pin_count:
+                pulls[gpio] = str(value)
+        return pulls
+
+    for doc in docs:
+        if doc.get("type") != "logic_settings":
+            continue
+        raw = doc.get("pin_pulls")
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                gpio = int(str(key), 0)
+                if pin_base <= gpio < pin_base + pin_count:
+                    pulls[gpio] = str(value)
+        raw_list = doc.get("pulls")
+        if isinstance(raw_list, list):
+            for index, value in enumerate(raw_list[:pin_count]):
+                pulls[pin_base + index] = str(value)
+    return pulls
+
+
 def write_json_docs(docs: Iterable[JsonDoc], out: TextIO) -> None:
     for doc in docs:
         out.write(json.dumps(doc, separators=(",", ":")) + "\n")
@@ -293,6 +327,7 @@ def capture_summary(capture: LogicCapture) -> Iterator[JsonDoc]:
         "post_samples": capture.post_samples,
         "burst_count": capture.burst_count,
         "burst_samples": capture.burst_samples,
+        "pin_pulls": {str(gpio): pull for gpio, pull in sorted(capture.pin_pulls.items())},
     }
     for pin_index in range(capture.pin_count):
         yield measure_pin(capture, pin_index)

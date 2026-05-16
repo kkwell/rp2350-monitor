@@ -9,8 +9,8 @@ the same live telemetry path plus per-channel replay buffers.
 Current measured firmware size:
 
 ```text
-text 492064 bytes
-bss  402696 bytes
+text 493904 bytes
+bss  404728 bytes
 ```
 
 `text` lives in flash. `bss` is static SRAM and includes lwIP buffers, device
@@ -133,6 +133,8 @@ and `logic_status`. Important fields:
 - `logic.record_bits`: number of valid packed bits per 32-bit word.
 - `logic.pull`: analyzer input bias for the current configuration, one of
   `none`, `up`, or `down`.
+- `logic.pin_pulls`: effective per-GPIO analyzer input bias after defaults and
+  overrides are merged.
 - `logic.pre_samples` / `logic.post_samples`: requested trigger window shape.
 - `logic.search_samples`: maximum SRAM-backed trigger search window.
 - `logic.trigger_found` / `logic.trigger_sample`: trigger scan result.

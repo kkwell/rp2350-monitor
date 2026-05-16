@@ -1,6 +1,8 @@
 #include "rpmon/core/command_processor.h"
 
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "rpmon/util/hex.h"
@@ -36,22 +38,26 @@ bool read_boolish(const char *line, const char *key, bool &out) {
     return false;
 }
 
+bool parse_logic_pull_text(const char *text, LogicPullMode &out) {
+    if (std::strcmp(text, "none") == 0 || std::strcmp(text, "off") == 0) {
+        out = LogicPullMode::None;
+        return true;
+    }
+    if (std::strcmp(text, "up") == 0 || std::strcmp(text, "pullup") == 0) {
+        out = LogicPullMode::Up;
+        return true;
+    }
+    if (std::strcmp(text, "down") == 0 || std::strcmp(text, "pulldown") == 0) {
+        out = LogicPullMode::Down;
+        return true;
+    }
+    return false;
+}
+
 bool read_logic_pull_mode(const char *line, LogicPullMode &out) {
     char text[12];
     if (json_get_string(line, "pull", text, sizeof(text))) {
-        if (std::strcmp(text, "none") == 0 || std::strcmp(text, "off") == 0) {
-            out = LogicPullMode::None;
-            return true;
-        }
-        if (std::strcmp(text, "up") == 0 || std::strcmp(text, "pullup") == 0) {
-            out = LogicPullMode::Up;
-            return true;
-        }
-        if (std::strcmp(text, "down") == 0 || std::strcmp(text, "pulldown") == 0) {
-            out = LogicPullMode::Down;
-            return true;
-        }
-        return false;
+        return parse_logic_pull_text(text, out);
     }
 
     bool enabled = false;
@@ -64,6 +70,141 @@ bool read_logic_pull_mode(const char *line, LogicPullMode &out) {
         return true;
     }
     return true;
+}
+
+const char *json_value_for_key(const char *json, const char *key) {
+    if (!json || !key) {
+        return nullptr;
+    }
+    char pattern[40];
+    int n = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(pattern)) {
+        return nullptr;
+    }
+    const char *p = json;
+    while ((p = std::strstr(p, pattern)) != nullptr) {
+        const char *after = p + n;
+        while (*after && std::isspace(static_cast<unsigned char>(*after))) {
+            ++after;
+        }
+        if (*after == ':') {
+            ++after;
+            while (*after && std::isspace(static_cast<unsigned char>(*after))) {
+                ++after;
+            }
+            return after;
+        }
+        p += n;
+    }
+    return nullptr;
+}
+
+const char *skip_json_ws(const char *p) {
+    while (*p && std::isspace(static_cast<unsigned char>(*p))) {
+        ++p;
+    }
+    return p;
+}
+
+bool read_json_token_string(const char *&p, char *out, size_t out_len) {
+    p = skip_json_ws(p);
+    if (*p != '"' || !out || out_len == 0) {
+        return false;
+    }
+    ++p;
+    size_t pos = 0;
+    while (*p && *p != '"') {
+        char c = *p++;
+        if (c == '\\' && *p) {
+            c = *p++;
+        }
+        if (pos + 1 >= out_len) {
+            return false;
+        }
+        out[pos++] = c;
+    }
+    if (*p != '"') {
+        return false;
+    }
+    ++p;
+    out[pos] = '\0';
+    return true;
+}
+
+bool read_logic_pin_pulls(const char *line,
+                          int pin_base,
+                          int pin_count,
+                          LogicPullMode default_pull,
+                          LogicPullMode *pin_pull_modes,
+                          char *err,
+                          size_t err_len) {
+    for (int i = 0; i < 32; ++i) {
+        pin_pull_modes[i] = i < pin_count ? default_pull : LogicPullMode::None;
+    }
+    const char *p = json_value_for_key(line, "pin_pulls");
+    if (!p) {
+        return true;
+    }
+    p = skip_json_ws(p);
+    if (*p != '{') {
+        snprintf(err, err_len, "logic pin_pulls must be an object");
+        return false;
+    }
+    ++p;
+    while (true) {
+        p = skip_json_ws(p);
+        if (*p == '}') {
+            return true;
+        }
+        char key[12];
+        if (!read_json_token_string(p, key, sizeof(key))) {
+            snprintf(err, err_len, "invalid logic pin_pulls key");
+            return false;
+        }
+        p = skip_json_ws(p);
+        if (*p != ':') {
+            snprintf(err, err_len, "invalid logic pin_pulls entry");
+            return false;
+        }
+        ++p;
+        char mode_text[12];
+        if (!read_json_token_string(p, mode_text, sizeof(mode_text))) {
+            snprintf(err, err_len, "invalid logic pin_pulls value");
+            return false;
+        }
+        char *end = nullptr;
+        long key_value = std::strtol(key, &end, 0);
+        if (end == key || *end != '\0') {
+            snprintf(err, err_len, "logic pin_pulls key must be a GPIO number");
+            return false;
+        }
+        int index = -1;
+        if (key_value >= pin_base && key_value < pin_base + pin_count) {
+            index = static_cast<int>(key_value) - pin_base;
+        } else if (key_value >= 0 && key_value < pin_count) {
+            index = static_cast<int>(key_value);
+        }
+        if (index < 0 || index >= pin_count) {
+            snprintf(err, err_len, "logic pin_pulls key outside captured pin range");
+            return false;
+        }
+        LogicPullMode mode = LogicPullMode::None;
+        if (!parse_logic_pull_text(mode_text, mode)) {
+            snprintf(err, err_len, "invalid logic pin_pulls value");
+            return false;
+        }
+        pin_pull_modes[index] = mode;
+        p = skip_json_ws(p);
+        if (*p == ',') {
+            ++p;
+            continue;
+        }
+        if (*p == '}') {
+            return true;
+        }
+        snprintf(err, err_len, "invalid logic pin_pulls object");
+        return false;
+    }
 }
 
 } // namespace
@@ -88,8 +229,8 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         static char wifi[1800];
         static char channels[1600];
         char buffers[1800];
-        char logic[1100];
-        static char extra[6400];
+        char logic[1600];
+        static char extra[7400];
         wifi_.status_json(wifi, sizeof(wifi));
         channels_.list_json(channels, sizeof(channels));
         logic_.status_json(logic, sizeof(logic));
@@ -396,6 +537,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         uint32_t burst_count = 1;
         LogicTriggerMode trigger_mode = LogicTriggerMode::Level;
         LogicPullMode pull_mode = LogicPullMode::None;
+        LogicPullMode pin_pull_modes[32] = {};
         bool trigger_level = true;
         if (!json_get_int(line, "pin_base", pin_base)) {
             json_get_int(line, "base", pin_base);
@@ -439,6 +581,14 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
             events_.publish_response(reply, false, cmd, "missing pin_base or pin_count");
             return;
         }
+        if (pin_count > 32) {
+            events_.publish_response(reply, false, cmd, "pin_count out of range");
+            return;
+        }
+        if (!read_logic_pin_pulls(line, pin_base, pin_count, pull_mode, pin_pull_modes, err, sizeof(err))) {
+            events_.publish_response(reply, false, cmd, err);
+            return;
+        }
         ok = logic_.configure(static_cast<uint8_t>(pin_base),
                               static_cast<uint8_t>(pin_count),
                               sample_rate,
@@ -447,6 +597,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
                               trigger_mode,
                               trigger_level,
                               pull_mode,
+                              pin_pull_modes,
                               pre_samples,
                               post_samples,
                               search_samples,
@@ -455,7 +606,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
                               static_cast<uint8_t>(burst_count),
                               err,
                               sizeof(err));
-        char extra[1100];
+        char extra[1600];
         logic_.status_json(extra, sizeof(extra));
         events_.publish_response(reply, ok, cmd, ok ? "logic configured" : err, ok ? extra : nullptr);
         return;
@@ -476,13 +627,13 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         return;
     }
     if (std::strcmp(cmd, "logic_status") == 0) {
-        char extra[1100];
+        char extra[1600];
         logic_.status_json(extra, sizeof(extra));
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;
     }
     if (std::strcmp(cmd, "logic_caps") == 0) {
-        char extra[1200];
+        char extra[1400];
         logic_.caps_json(extra, sizeof(extra));
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;

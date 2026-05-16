@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.7.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.8.0","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -353,6 +353,8 @@ Response:
     "capture_modes": ["single", "pretrigger", "burst"],
     "triggers": ["none", "level", "rising", "falling", "pattern"],
     "pull_modes": ["none", "up", "down"],
+    "per_pin_pull": true,
+    "pin_pull_field": "pin_pulls",
     "pattern_mask_bits_max": 23,
     "burst_marks_max": 16,
     "host_decoders": ["summary", "bursts", "edges", "uart", "spi", "i2c"],
@@ -368,9 +370,17 @@ Configure a capture:
 {"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"pull":"down"}
 ```
 
-`pull` is optional and may be `none`, `up`, or `down`. The default is `none`.
-Use `up` or `down` only to stabilize idle/floating analyzer inputs; external
-drivers still define the real bus level.
+`pull` is optional and may be `none`, `up`, or `down`. The default is `none` and
+applies to every captured GPIO. `pin_pulls` may override individual GPIOs using
+absolute GPIO numbers as object keys:
+
+```json
+{"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"pull":"none","pin_pulls":{"16":"up","17":"none","18":"down","19":"none"}}
+```
+
+Use internal pulls only to stabilize idle/floating analyzer inputs; external
+drivers still define the real bus level. For I2C analysis, external bus pull-ups
+are preferred over the Pico's weak internal pull-ups.
 
 Optional trigger. `trigger_mode` may be `level`, `rising`, or `falling`.
 `level` uses `trigger_level`; edge modes wait for the opposite level first and
@@ -405,6 +415,8 @@ Pattern/pre-trigger example:
   "pin_count": 4,
   "sample_rate": 10000000,
   "samples": 4096,
+  "pull": "none",
+  "pin_pulls": {"16": "up", "17": "none", "18": "down", "19": "none"},
   "pre_samples": 512,
   "post_samples": 3584,
   "search_samples": 32768,
@@ -442,6 +454,8 @@ Metadata line:
   "samples": 4096,
   "record_bits": 32,
   "sample_offset": 1024,
+  "pull": "none",
+  "pin_pulls": {"16": "up", "17": "none", "18": "down", "19": "none"},
   "pre_samples": 512,
   "post_samples": 3584,
   "trigger_found": true,
@@ -509,6 +523,7 @@ capture intent:
   "search_samples": 32768,
   "burst_count": 4,
   "pull": "down",
+  "pin_pulls": {"18": "up", "19": "none"},
   "trigger": {"mode": "pattern", "mask": "0x3", "value": "0x2"},
   "channel_names": {"16": "uart_rx", "17": "uart_tx"}
 }
@@ -516,6 +531,7 @@ capture intent:
 
 ```sh
 python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --settings logic_settings.json --output capture.jsonl --release
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 4096 --pull none --pin-pull 16=up --pin-pull 18=down --output capture.jsonl --release
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary --start-sample 100 --end-sample 1100
 python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format csv --output region.csv --start-sample 100 --end-sample 1100
 ```
