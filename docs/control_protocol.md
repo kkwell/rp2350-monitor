@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.5.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.6.0","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -326,11 +326,49 @@ The logic analyzer is a separate PIO/DMA capture engine for oscilloscope-style
 multi-pin digital sampling. It is not a normal `channel_config` driver because
 bulk captures use a dedicated SRAM buffer and are uploaded in larger chunks.
 
+Host software should query capabilities before presenting a capture UI or
+selecting sample sizes:
+
+```json
+{"cmd":"logic_caps"}
+```
+
+Response:
+
+```json
+{
+  "type": "resp",
+  "ok": true,
+  "cmd": "logic_caps",
+  "logic_caps": {
+    "engine": "pio2_dma",
+    "pin_ranges": [{"first": 0, "last": 22}, {"first": 26, "last": 28}],
+    "contiguous_pins": true,
+    "pin_count_max": 23,
+    "sample_rate_max": 150000000,
+    "buffer_words": 32768,
+    "buffer_bytes": 131072,
+    "upload_chunk_bytes": 512,
+    "encoding": "u32-le-packed",
+    "capture_mode": "capture_then_upload",
+    "triggers": ["none", "level", "rising", "falling"],
+    "pull_modes": ["none", "up", "down"],
+    "host_decoders": ["summary", "edges", "uart", "spi", "i2c"],
+    "host_exports": ["csv", "vcd"],
+    "reserved_features": ["pattern_trigger", "pretrigger", "burst", "external_psram"]
+  }
+}
+```
+
 Configure a capture:
 
 ```json
-{"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024}
+{"cmd":"logic_config","pin_base":16,"pin_count":4,"sample_rate":10000000,"samples":1024,"pull":"down"}
 ```
+
+`pull` is optional and may be `none`, `up`, or `down`. The default is `none`.
+Use `up` or `down` only to stabilize idle/floating analyzer inputs; external
+drivers still define the real bus level.
 
 Optional trigger. `trigger_mode` may be `level`, `rising`, or `falling`.
 `level` uses `trigger_level`; edge modes wait for the opposite level first and
@@ -387,6 +425,29 @@ python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder spi --cs
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder i2c --sda-pin 16 --scl-pin 17
 python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format csv --output capture.csv
 python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format vcd --output capture.vcd
+```
+
+`logic_capture` can also read repeatable settings from a JSON file. CLI
+arguments override fields from the file. The CLI writes a `type:"logic_settings"`
+line into the capture JSONL so later decoders and PC tools can retain labels and
+capture intent:
+
+```json
+{
+  "pin_base": 16,
+  "pin_count": 4,
+  "sample_rate": 10000000,
+  "samples": 4096,
+  "pull": "down",
+  "trigger": {"pin": 16, "mode": "rising", "level": true},
+  "channel_names": {"16": "uart_rx", "17": "uart_tx"}
+}
+```
+
+```sh
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --settings logic_settings.json --output capture.jsonl --release
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary --start-sample 100 --end-sample 1100
+python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format csv --output region.csv --start-sample 100 --end-sample 1100
 ```
 
 `logic_decode` emits newline-delimited JSON. Initial built-in decoders cover:

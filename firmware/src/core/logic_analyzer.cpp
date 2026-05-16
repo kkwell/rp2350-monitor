@@ -11,6 +11,22 @@
 
 namespace rpmon {
 
+namespace {
+
+const char *logic_pull_name(LogicPullMode mode) {
+    switch (mode) {
+    case LogicPullMode::Up:
+        return "up";
+    case LogicPullMode::Down:
+        return "down";
+    case LogicPullMode::None:
+    default:
+        return "none";
+    }
+}
+
+} // namespace
+
 LogicAnalyzer::LogicAnalyzer(PinManager &pins) : pins_(pins) {}
 
 bool LogicAnalyzer::configure(uint8_t pin_base,
@@ -20,6 +36,7 @@ bool LogicAnalyzer::configure(uint8_t pin_base,
                               int trigger_pin,
                               LogicTriggerMode trigger_mode,
                               bool trigger_level,
+                              LogicPullMode pull_mode,
                               char *err,
                               size_t err_len) {
     if (running_) {
@@ -87,6 +104,7 @@ bool LogicAnalyzer::configure(uint8_t pin_base,
     trigger_pin_ = trigger_pin;
     trigger_mode_ = trigger_mode;
     trigger_level_ = trigger_level;
+    pull_mode_ = pull_mode;
     configured_ = true;
     complete_ = false;
     completion_reported_ = false;
@@ -130,6 +148,7 @@ bool LogicAnalyzer::start(char *err, size_t err_len) {
     offset_ = pio_add_program(pio_, &program);
     program_loaded_ = true;
 
+    apply_pin_pulls();
     for (uint8_t i = 0; i < pin_count_; ++i) {
         pio_gpio_init(pio_, pin_base_ + i);
     }
@@ -204,6 +223,7 @@ bool LogicAnalyzer::release(char *err, size_t err_len) {
     trigger_pin_ = -1;
     trigger_mode_ = LogicTriggerMode::Level;
     trigger_level_ = true;
+    pull_mode_ = LogicPullMode::None;
     completion_reported_ = false;
     return true;
 }
@@ -241,7 +261,7 @@ void LogicAnalyzer::status_json(char *out, size_t out_len) const {
         trigger_mode = "falling";
     }
     snprintf(out, out_len,
-             "\"logic\":{\"configured\":%s,\"running\":%s,\"complete\":%s,\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"words\":%lu,\"record_bits\":%lu,\"trigger_pin\":%d,\"trigger_mode\":\"%s\",\"trigger_level\":%s,\"buffer_words_max\":%u,\"buffer_bytes\":%u,\"chunk_bytes\":%u}",
+             "\"logic\":{\"configured\":%s,\"running\":%s,\"complete\":%s,\"capture_id\":%lu,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"words\":%lu,\"record_bits\":%lu,\"trigger_pin\":%d,\"trigger_mode\":\"%s\",\"trigger_level\":%s,\"pull\":\"%s\",\"buffer_words_max\":%u,\"buffer_bytes\":%u,\"chunk_bytes\":%u}",
              configured_ ? "true" : "false",
              running_ ? "true" : "false",
              complete_ ? "true" : "false",
@@ -255,6 +275,16 @@ void LogicAnalyzer::status_json(char *out, size_t out_len) const {
              trigger_pin_,
              trigger_mode,
              trigger_level_ ? "true" : "false",
+             logic_pull_name(pull_mode_),
+             static_cast<unsigned>(kLogicCaptureWords),
+             static_cast<unsigned>(kLogicCaptureWords * sizeof(uint32_t)),
+             static_cast<unsigned>(kLogicUploadChunkBytes));
+}
+
+void LogicAnalyzer::caps_json(char *out, size_t out_len) const {
+    snprintf(out, out_len,
+             "\"logic_caps\":{\"engine\":\"pio2_dma\",\"pin_ranges\":[{\"first\":0,\"last\":22},{\"first\":26,\"last\":28}],\"contiguous_pins\":true,\"pin_count_max\":23,\"sample_rate_max\":%lu,\"buffer_words\":%u,\"buffer_bytes\":%u,\"upload_chunk_bytes\":%u,\"encoding\":\"u32-le-packed\",\"capture_mode\":\"capture_then_upload\",\"triggers\":[\"none\",\"level\",\"rising\",\"falling\"],\"pull_modes\":[\"none\",\"up\",\"down\"],\"host_decoders\":[\"summary\",\"edges\",\"uart\",\"spi\",\"i2c\"],\"host_exports\":[\"csv\",\"vcd\"],\"reserved_features\":[\"pattern_trigger\",\"pretrigger\",\"burst\",\"external_psram\"]}",
+             static_cast<unsigned long>(clk_sys_hz()),
              static_cast<unsigned>(kLogicCaptureWords),
              static_cast<unsigned>(kLogicCaptureWords * sizeof(uint32_t)),
              static_cast<unsigned>(kLogicUploadChunkBytes));
@@ -282,7 +312,7 @@ bool LogicAnalyzer::stream_capture(LineSink &reply, size_t offset_words, size_t 
         bytes_to_hex(reinterpret_cast<const uint8_t *>(buffer_ + word_offset), chunk_words * sizeof(uint32_t), hex, sizeof(hex));
         char line[kLogicUploadChunkBytes * 2 + 360];
         snprintf(line, sizeof(line),
-                 "{\"type\":\"logic\",\"capture_id\":%lu,\"offset_words\":%u,\"words\":%u,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"record_bits\":%lu,\"encoding\":\"u32-le-packed\",\"hex\":\"%s\"}",
+                 "{\"type\":\"logic\",\"capture_id\":%lu,\"offset_words\":%u,\"words\":%u,\"pin_base\":%u,\"pin_count\":%u,\"sample_rate\":%lu,\"samples\":%lu,\"record_bits\":%lu,\"pull\":\"%s\",\"encoding\":\"u32-le-packed\",\"hex\":\"%s\"}",
                  static_cast<unsigned long>(capture_id_),
                  static_cast<unsigned>(word_offset),
                  static_cast<unsigned>(chunk_words),
@@ -291,6 +321,7 @@ bool LogicAnalyzer::stream_capture(LineSink &reply, size_t offset_words, size_t 
                  static_cast<unsigned long>(sample_rate_hz_),
                  static_cast<unsigned long>(sample_count_),
                  static_cast<unsigned long>(bits_packed_per_word(pin_count_)),
+                 logic_pull_name(pull_mode_),
                  hex);
         if (!reply.send_line(line)) {
             snprintf(err, err_len, "logic upload sink blocked");
@@ -340,9 +371,23 @@ void LogicAnalyzer::release_runtime() {
 
 void LogicAnalyzer::release_pins() {
     for (uint8_t i = 0; i < pin_count_; ++i) {
-        gpio_deinit(pin_base_ + i);
+        uint gpio = pin_base_ + i;
+        gpio_disable_pulls(gpio);
+        gpio_deinit(gpio);
     }
     pins_.release_channel(kOwnerId);
+}
+
+void LogicAnalyzer::apply_pin_pulls() const {
+    for (uint8_t i = 0; i < pin_count_; ++i) {
+        uint gpio = pin_base_ + i;
+        gpio_disable_pulls(gpio);
+        if (pull_mode_ == LogicPullMode::Up) {
+            gpio_pull_up(gpio);
+        } else if (pull_mode_ == LogicPullMode::Down) {
+            gpio_pull_down(gpio);
+        }
+    }
 }
 
 } // namespace rpmon

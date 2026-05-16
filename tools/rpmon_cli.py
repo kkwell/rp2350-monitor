@@ -291,6 +291,119 @@ def uart_loopback_test(transport: Transport, args: argparse.Namespace, log_file:
     return 3
 
 
+def _setting(settings: Dict[str, Any], key: str, default: Any = None) -> Any:
+    return settings[key] if key in settings else default
+
+
+def _int_setting(settings: Dict[str, Any], key: str, default: Optional[int]) -> Optional[int]:
+    value = _setting(settings, key, default)
+    if value is None:
+        return None
+    return int(value)
+
+
+def _bool_setting(settings: Dict[str, Any], key: str, default: Optional[bool]) -> Optional[bool]:
+    value = _setting(settings, key, default)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "high"}:
+        return True
+    if text in {"0", "false", "no", "off", "low"}:
+        return False
+    raise SystemExit(f"invalid boolean value for {key}: {value}")
+
+
+def load_logic_settings(path: Optional[str]) -> Dict[str, Any]:
+    if not path:
+        return {}
+    with open(path, "r", encoding="utf-8") as handle:
+        settings = json.load(handle)
+    if not isinstance(settings, dict):
+        raise SystemExit("logic capture settings must be a JSON object")
+    return settings
+
+
+def parse_channel_names(settings: Dict[str, Any], overrides: Optional[list[str]]) -> Dict[str, str]:
+    names: Dict[str, str] = {}
+    raw_names = settings.get("channel_names")
+    if isinstance(raw_names, dict):
+        for key, value in raw_names.items():
+            names[str(int(str(key), 0))] = str(value)
+
+    raw_channels = settings.get("channels")
+    if isinstance(raw_channels, list):
+        for item in raw_channels:
+            if not isinstance(item, dict) or "name" not in item:
+                continue
+            gpio = item.get("gpio", item.get("pin", item.get("index")))
+            if gpio is None:
+                continue
+            names[str(int(gpio))] = str(item["name"])
+
+    for item in overrides or []:
+        if "=" not in item:
+            raise SystemExit("--channel-name must use GPIO=NAME, for example --channel-name 16=uart_rx")
+        key, value = item.split("=", 1)
+        names[str(int(key, 0))] = value
+    return names
+
+
+def build_logic_capture_config(args: argparse.Namespace) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    settings = load_logic_settings(args.settings)
+    trigger = settings.get("trigger") if isinstance(settings.get("trigger"), dict) else {}
+
+    pin_base = args.pin_base if args.pin_base is not None else _int_setting(settings, "pin_base", None)
+    pin_count = args.pin_count if args.pin_count is not None else _int_setting(settings, "pin_count", None)
+    if pin_base is None or pin_count is None:
+        raise SystemExit("logic_capture requires --pin-base/--pin-count or a settings file containing pin_base/pin_count")
+
+    sample_rate = args.sample_rate if args.sample_rate is not None else _int_setting(settings, "sample_rate", 1_000_000)
+    samples = args.samples if args.samples is not None else _int_setting(settings, "samples", 1024)
+    pull = args.pull if args.pull is not None else str(settings.get("pull", "none"))
+
+    trigger_pin = args.trigger_pin
+    if trigger_pin is None:
+        trigger_pin = _int_setting(settings, "trigger_pin", None)
+    if trigger_pin is None and trigger:
+        trigger_pin = _int_setting(trigger, "pin", None)
+
+    trigger_mode = args.trigger_mode
+    if trigger_mode is None:
+        trigger_mode = str(settings.get("trigger_mode", trigger.get("mode", "level")))
+
+    trigger_level = bool(args.trigger_level) if args.trigger_level is not None else _bool_setting(settings, "trigger_level", None)
+    if trigger_level is None and trigger:
+        trigger_level = _bool_setting(trigger, "level", True)
+    if trigger_level is None:
+        trigger_level = True
+
+    config: Dict[str, Any] = {
+        "cmd": "logic_config",
+        "pin_base": int(pin_base),
+        "pin_count": int(pin_count),
+        "sample_rate": int(sample_rate),
+        "samples": int(samples),
+        "pull": pull,
+    }
+    if trigger_pin is not None:
+        config["trigger_pin"] = int(trigger_pin)
+        config["trigger_mode"] = trigger_mode
+        config["trigger_level"] = bool(trigger_level)
+
+    metadata = {key: value for key, value in config.items() if key != "cmd"}
+    channel_names = parse_channel_names(settings, args.channel_name)
+    if channel_names:
+        metadata["channel_names"] = channel_names
+    if args.settings:
+        metadata["settings_file"] = args.settings
+    return config, metadata
+
+
 def logic_capture_workflow(
     transport: Transport,
     args: argparse.Namespace,
@@ -301,17 +414,11 @@ def logic_capture_workflow(
     if log_file is not None:
         logs.append(log_file)
     try:
-        config: Dict[str, Any] = {
-            "cmd": "logic_config",
-            "pin_base": args.pin_base,
-            "pin_count": args.pin_count,
-            "sample_rate": args.sample_rate,
-            "samples": args.samples,
-        }
-        if args.trigger_pin is not None:
-            config["trigger_pin"] = args.trigger_pin
-            config["trigger_mode"] = args.trigger_mode
-            config["trigger_level"] = bool(args.trigger_level)
+        config, metadata = build_logic_capture_config(args)
+        print_json_line_to_files(
+            json.dumps({"type": "logic_settings", **metadata}, separators=(",", ":")),
+            logs,
+        )
         ok, _ = expect_response_to_files(transport, config, args.timeout, logs)
         if not ok:
             return 2
@@ -376,6 +483,7 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
         "logic_stop",
         "logic_release",
         "logic_status",
+        "logic_caps",
     }:
         return {"cmd": cmd}
     if cmd == "events_read":
@@ -484,6 +592,7 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
             "pin_count": args.pin_count,
             "sample_rate": args.sample_rate,
             "samples": args.samples,
+            "pull": args.pull,
         }
         if args.trigger_pin is not None:
             payload["trigger_pin"] = args.trigger_pin
@@ -603,24 +712,29 @@ def build_parser() -> argparse.ArgumentParser:
     logic_config.add_argument("--trigger-pin", type=int)
     logic_config.add_argument("--trigger-mode", choices=["level", "rising", "falling"], default="level")
     logic_config.add_argument("--trigger-level", type=int, choices=[0, 1], default=1)
+    logic_config.add_argument("--pull", choices=["none", "up", "down"], default="none")
 
     sub.add_parser("logic_start")
     sub.add_parser("logic_stop")
     sub.add_parser("logic_release")
     sub.add_parser("logic_status")
+    sub.add_parser("logic_caps")
 
     logic_read = sub.add_parser("logic_read")
     logic_read.add_argument("--offset-words", type=int, default=0)
     logic_read.add_argument("--count-words", type=int, default=0)
 
     logic_capture = sub.add_parser("logic_capture")
-    logic_capture.add_argument("--pin-base", type=int, required=True)
-    logic_capture.add_argument("--pin-count", type=int, required=True)
-    logic_capture.add_argument("--sample-rate", type=int, default=1_000_000)
-    logic_capture.add_argument("--samples", type=int, default=1024)
+    logic_capture.add_argument("--settings", help="JSON capture settings file")
+    logic_capture.add_argument("--pin-base", type=int)
+    logic_capture.add_argument("--pin-count", type=int)
+    logic_capture.add_argument("--sample-rate", type=int)
+    logic_capture.add_argument("--samples", type=int)
     logic_capture.add_argument("--trigger-pin", type=int)
-    logic_capture.add_argument("--trigger-mode", choices=["level", "rising", "falling"], default="level")
-    logic_capture.add_argument("--trigger-level", type=int, choices=[0, 1], default=1)
+    logic_capture.add_argument("--trigger-mode", choices=["level", "rising", "falling"])
+    logic_capture.add_argument("--trigger-level", type=int, choices=[0, 1])
+    logic_capture.add_argument("--pull", choices=["none", "up", "down"])
+    logic_capture.add_argument("--channel-name", action="append", help="Attach a capture label as GPIO=NAME; repeatable")
     logic_capture.add_argument("--output", required=True, help="Write raw logic JSONL capture")
     logic_capture.add_argument("--wait-timeout", type=float, default=10.0)
     logic_capture.add_argument("--read-timeout", type=float, default=20.0)
@@ -632,6 +746,8 @@ def build_parser() -> argparse.ArgumentParser:
     logic_decode.add_argument("--capture-id", type=int)
     logic_decode.add_argument("--decoder", choices=["summary", "edges", "uart", "spi", "i2c"], default="summary")
     logic_decode.add_argument("--output")
+    logic_decode.add_argument("--start-sample", type=int)
+    logic_decode.add_argument("--end-sample", type=int)
     logic_decode.add_argument("--pin", type=int, action="append", help="GPIO or relative pin for edge decode; repeatable")
     logic_decode.add_argument("--rx-pin", type=int)
     logic_decode.add_argument("--baud", type=int, default=115200)
@@ -655,6 +771,8 @@ def build_parser() -> argparse.ArgumentParser:
     logic_export.add_argument("--capture-id", type=int)
     logic_export.add_argument("--format", choices=["csv", "vcd"], required=True)
     logic_export.add_argument("--output", required=True)
+    logic_export.add_argument("--start-sample", type=int)
+    logic_export.add_argument("--end-sample", type=int)
 
     raw = sub.add_parser("raw_json")
     raw.add_argument("payload")

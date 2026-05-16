@@ -11,7 +11,8 @@ Current version:
 - Pico-hosted setup AP: `RP2350-Monitor-xxxxxx`, password `rpmon2350`, IP `192.168.4.1`
 - Native UART, SPI, I2C, and GPIO channel layers
 - PIO2/DMA high-speed logic analyzer for contiguous GPIO capture
-- Host-side logic analysis for UART, SPI, I2C, edges, timing summary, CSV, and VCD
+- Machine-readable logic analyzer capability discovery for host software
+- Host-side logic analysis for UART, SPI, I2C, edges, timing summary, sample windows, CSV, and VCD
 - CAN reserved behind a driver interface
 - Host CLI that emits newline-delimited JSON for AI/tooling analysis
 - Bounded global and per-channel event buffering with overflow counters and replay
@@ -130,6 +131,7 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 monitor
 High-speed logic capture on GPIO16..GPIO19:
 
 ```sh
+python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_caps
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_config --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 1024
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_start
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_status
@@ -142,12 +144,31 @@ uploads `type:"logic"` JSONL chunks over the same USB or TCP control link.
 The host CLI can capture and decode in a tooling-friendly flow:
 
 ```sh
-python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 4096 --output capture.jsonl --release
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 4096 --pull down --channel-name 16=uart_rx --output capture.jsonl --release
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder uart --rx-pin 16 --baud 115200
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder spi --cs-pin 16 --sck-pin 17 --mosi-pin 18 --miso-pin 19 --mode 0
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder i2c --sda-pin 16 --scl-pin 17
 python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format vcd --output capture.vcd
+```
+
+For repeatable host workflows, store capture settings as JSON and pass
+`--settings`. Command-line arguments override fields from the settings file:
+
+```json
+{
+  "pin_base": 16,
+  "pin_count": 4,
+  "sample_rate": 10000000,
+  "samples": 4096,
+  "pull": "down",
+  "channel_names": {"16": "uart_rx", "17": "uart_tx"}
+}
+```
+
+```sh
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --settings logic_settings.json --output capture.jsonl --release
+python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary --start-sample 100 --end-sample 1100
 ```
 
 ## Protocol

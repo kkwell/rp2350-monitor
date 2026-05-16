@@ -44,6 +44,8 @@ firmware limits:
   `logic capture requires 65536 words, max is 32768`.
 - Logic analyzer pin ranges must be contiguous exposed GPIOs and cannot overlap
   other channel ownership.
+- Logic analyzer `pull` must be `none`, `up`, or `down`; invalid values return
+  `invalid logic pull mode`.
 - If the PIO2 state machine, PIO instruction memory, or a DMA channel cannot be
   claimed, `logic_start` returns `ok:false` with the specific resource name.
 
@@ -71,6 +73,10 @@ High-speed logic analyzer captures use a separate fixed buffer:
 - Upload chunks are capped at `kLogicUploadChunkBytes = 512`.
 - Bulk `type:"logic"` lines are sent over the same USB CDC or Wi-Fi TCP link as
   other JSON lines, but they are not copied into the telemetry event queues.
+- `logic_caps` reports the active analyzer limits, including exposed contiguous
+  GPIO ranges, sample-rate ceiling, SRAM buffer size, upload chunk size,
+  supported trigger modes, supported pull modes, host decoders, host exports,
+  and reserved features.
 
 This keeps high-speed captures from evicting ordinary UART/SPI/I2C/GPIO event
 history. It also means hosts must finish `logic_read` and store the resulting
@@ -94,6 +100,9 @@ has a gap and the host should mark the analysis as incomplete.
 - GPIO supports input sampling, output control, and input-change events.
 - Logic analyzer supports triggered fixed-rate sampling of multiple contiguous
   GPIOs into SRAM, followed by USB/TCP upload.
+- Logic analyzer can apply optional internal pull-up or pull-down bias to all
+  captured pins before PIO sampling. The default is `none`, which is safest for
+  driven buses.
 - Logic analyzer trigger modes are level, rising edge, and falling edge. Pattern
   trigger, pre-trigger circular capture, and burst capture remain firmware
   extension points.

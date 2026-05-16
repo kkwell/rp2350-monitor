@@ -36,6 +36,36 @@ bool read_boolish(const char *line, const char *key, bool &out) {
     return false;
 }
 
+bool read_logic_pull_mode(const char *line, LogicPullMode &out) {
+    char text[12];
+    if (json_get_string(line, "pull", text, sizeof(text))) {
+        if (std::strcmp(text, "none") == 0 || std::strcmp(text, "off") == 0) {
+            out = LogicPullMode::None;
+            return true;
+        }
+        if (std::strcmp(text, "up") == 0 || std::strcmp(text, "pullup") == 0) {
+            out = LogicPullMode::Up;
+            return true;
+        }
+        if (std::strcmp(text, "down") == 0 || std::strcmp(text, "pulldown") == 0) {
+            out = LogicPullMode::Down;
+            return true;
+        }
+        return false;
+    }
+
+    bool enabled = false;
+    if (read_boolish(line, "pull_up", enabled) && enabled) {
+        out = LogicPullMode::Up;
+        return true;
+    }
+    if (read_boolish(line, "pull_down", enabled) && enabled) {
+        out = LogicPullMode::Down;
+        return true;
+    }
+    return true;
+}
+
 } // namespace
 
 CommandProcessor::CommandProcessor(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, PinManager &pins, EventBus &events)
@@ -179,7 +209,8 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     }
     if (std::strcmp(cmd, "logic_config") == 0 || std::strcmp(cmd, "logic_start") == 0 ||
         std::strcmp(cmd, "logic_stop") == 0 || std::strcmp(cmd, "logic_release") == 0 ||
-        std::strcmp(cmd, "logic_status") == 0 || std::strcmp(cmd, "logic_read") == 0) {
+        std::strcmp(cmd, "logic_status") == 0 || std::strcmp(cmd, "logic_caps") == 0 ||
+        std::strcmp(cmd, "logic_read") == 0) {
         handle_logic_io(line, reply, cmd);
         return;
     }
@@ -358,6 +389,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
         uint32_t sample_rate = 1000000;
         uint32_t samples = 1024;
         LogicTriggerMode trigger_mode = LogicTriggerMode::Level;
+        LogicPullMode pull_mode = LogicPullMode::None;
         bool trigger_level = true;
         if (!json_get_int(line, "pin_base", pin_base)) {
             json_get_int(line, "base", pin_base);
@@ -383,6 +415,10 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
             }
         }
         read_boolish(line, "trigger_level", trigger_level);
+        if (!read_logic_pull_mode(line, pull_mode)) {
+            events_.publish_response(reply, false, cmd, "invalid logic pull mode");
+            return;
+        }
         if (pin_base < 0 || pin_count <= 0) {
             events_.publish_response(reply, false, cmd, "missing pin_base or pin_count");
             return;
@@ -394,6 +430,7 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
                               trigger_pin,
                               trigger_mode,
                               trigger_level,
+                              pull_mode,
                               err,
                               sizeof(err));
         char extra[520];
@@ -419,6 +456,12 @@ void CommandProcessor::handle_logic_io(const char *line, LineSink &reply, const 
     if (std::strcmp(cmd, "logic_status") == 0) {
         char extra[520];
         logic_.status_json(extra, sizeof(extra));
+        events_.publish_response(reply, true, cmd, "ok", extra);
+        return;
+    }
+    if (std::strcmp(cmd, "logic_caps") == 0) {
+        char extra[1200];
+        logic_.caps_json(extra, sizeof(extra));
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;
     }

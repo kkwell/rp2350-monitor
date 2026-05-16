@@ -9,7 +9,7 @@ the same live telemetry path plus per-channel replay buffers.
 Current measured firmware size:
 
 ```text
-text 486512 bytes
+text 487688 bytes
 bss  402592 bytes
 ```
 
@@ -130,6 +130,12 @@ and `logic_status`. Important fields:
 - `logic.words`: captured 32-bit word count.
 - `logic.buffer_words_max` / `logic.buffer_bytes`: fixed SRAM capacity.
 - `logic.record_bits`: number of valid packed bits per 32-bit word.
+- `logic.pull`: analyzer input bias for the current configuration, one of
+  `none`, `up`, or `down`.
+
+Use `logic_caps` before allocating host-side storage or presenting a capture
+configuration UI. It is the stable source for buffer size, upload chunk size,
+supported trigger modes, supported pull modes, and reserved features.
 
 ## Failure Cases
 

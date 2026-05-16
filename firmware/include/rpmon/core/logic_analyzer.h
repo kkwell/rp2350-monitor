@@ -18,6 +18,12 @@ enum class LogicTriggerMode : uint8_t {
     Falling
 };
 
+enum class LogicPullMode : uint8_t {
+    None,
+    Up,
+    Down
+};
+
 class LogicAnalyzer {
 public:
     explicit LogicAnalyzer(PinManager &pins);
@@ -29,6 +35,7 @@ public:
                    int trigger_pin,
                    LogicTriggerMode trigger_mode,
                    bool trigger_level,
+                   LogicPullMode pull_mode,
                    char *err,
                    size_t err_len);
     bool start(char *err, size_t err_len);
@@ -36,6 +43,7 @@ public:
     bool release(char *err, size_t err_len);
     void poll(EventBus &events);
     void status_json(char *out, size_t out_len) const;
+    void caps_json(char *out, size_t out_len) const;
     bool stream_capture(LineSink &reply, size_t offset_words, size_t max_words, char *err, size_t err_len) const;
 
 private:
@@ -45,6 +53,7 @@ private:
     uint32_t clk_sys_hz() const;
     void release_runtime();
     void release_pins();
+    void apply_pin_pulls() const;
 
     PinManager &pins_;
     PIO pio_ = pio2;
@@ -65,6 +74,7 @@ private:
     int trigger_pin_ = -1;
     LogicTriggerMode trigger_mode_ = LogicTriggerMode::Level;
     bool trigger_level_ = true;
+    LogicPullMode pull_mode_ = LogicPullMode::None;
     uint32_t buffer_[kLogicCaptureWords] = {};
 };
 

@@ -8,7 +8,7 @@ import json
 import math
 import statistics
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, TextIO
 
@@ -29,6 +29,8 @@ class LogicCapture:
     samples: int
     record_bits: int
     words: List[int]
+    channel_names: Dict[int, str] = field(default_factory=dict)
+    sample_offset: int = 0
 
     @classmethod
     def from_jsonl(cls, path: str, capture_id: Optional[int] = None) -> "LogicCapture":
@@ -48,6 +50,7 @@ class LogicCapture:
         sample_rate = int(first["sample_rate"])
         samples = int(first["samples"])
         record_bits = int(first.get("record_bits", bits_packed_per_word(pin_count)))
+        channel_names = collect_channel_names(docs)
         expected_words = math.ceil((samples * pin_count) / record_bits)
 
         words: List[Optional[int]] = [None] * expected_words
@@ -77,6 +80,7 @@ class LogicCapture:
             samples=samples,
             record_bits=record_bits,
             words=[int(value) for value in words],
+            channel_names=channel_names,
         )
 
     @property
@@ -86,7 +90,10 @@ class LogicCapture:
         return self.samples * 1_000_000.0 / self.sample_rate
 
     def sample_time_us(self, sample: int) -> float:
-        return sample * 1_000_000.0 / self.sample_rate
+        return (sample + self.sample_offset) * 1_000_000.0 / self.sample_rate
+
+    def absolute_sample(self, sample: int) -> int:
+        return sample + self.sample_offset
 
     def resolve_pin(self, pin: int) -> int:
         if self.pin_base <= pin < self.pin_base + self.pin_count:
@@ -99,6 +106,10 @@ class LogicCapture:
 
     def gpio_for_index(self, pin_index: int) -> int:
         return self.pin_base + pin_index
+
+    def channel_label(self, pin_index: int) -> str:
+        gpio = self.gpio_for_index(pin_index)
+        return self.channel_names.get(gpio, f"gpio{gpio}")
 
     def level_at_index(self, sample: int, pin_index: int) -> int:
         if sample < 0:
@@ -113,6 +124,41 @@ class LogicCapture:
     def level(self, sample: int, pin: int) -> int:
         return self.level_at_index(sample, self.resolve_pin(pin))
 
+    def sliced(self, start_sample: Optional[int], end_sample: Optional[int]) -> "LogicCapture":
+        if start_sample is None and end_sample is None:
+            return self
+        start = 0 if start_sample is None else int(start_sample)
+        end = self.samples if end_sample is None else int(end_sample)
+        if start < 0 or end < 0 or start >= end or end > self.samples:
+            raise LogicDecodeError(f"invalid sample window {start}..{end}, capture has {self.samples} samples")
+        if start == 0 and end == self.samples:
+            return self
+
+        samples = end - start
+        record_bits = bits_packed_per_word(self.pin_count)
+        expected_words = math.ceil((samples * self.pin_count) / record_bits)
+        words = [0] * expected_words
+        for rel_sample in range(samples):
+            for pin_index in range(self.pin_count):
+                if not self.level_at_index(start + rel_sample, pin_index):
+                    continue
+                bit_index = pin_index + rel_sample * self.pin_count
+                word_index = bit_index // record_bits
+                shift = (bit_index % record_bits) + 32 - record_bits
+                words[word_index] |= 1 << shift
+
+        return LogicCapture(
+            capture_id=self.capture_id,
+            pin_base=self.pin_base,
+            pin_count=self.pin_count,
+            sample_rate=self.sample_rate,
+            samples=samples,
+            record_bits=record_bits,
+            words=words,
+            channel_names=dict(self.channel_names),
+            sample_offset=self.sample_offset + start,
+        )
+
     def iter_edges(self, pin: int) -> Iterator[JsonDoc]:
         pin_index = self.resolve_pin(pin)
         last = self.level_at_index(0, pin_index)
@@ -122,9 +168,10 @@ class LogicCapture:
                 yield {
                     "type": "logic_edge",
                     "capture_id": self.capture_id,
-                    "sample": sample,
+                    "sample": self.absolute_sample(sample),
                     "t_us": self.sample_time_us(sample),
                     "gpio": self.gpio_for_index(pin_index),
+                    "name": self.channel_label(pin_index),
                     "edge": "rising" if value else "falling",
                     "level": value,
                 }
@@ -149,6 +196,26 @@ def read_jsonl(path: str) -> Iterator[JsonDoc]:
                 yield doc
 
 
+def collect_channel_names(docs: Iterable[JsonDoc]) -> Dict[int, str]:
+    names: Dict[int, str] = {}
+    for doc in docs:
+        if doc.get("type") != "logic_settings":
+            continue
+        raw = doc.get("channel_names")
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                names[int(str(key), 0)] = str(value)
+        channels = doc.get("channels")
+        if isinstance(channels, list):
+            for item in channels:
+                if not isinstance(item, dict) or "name" not in item:
+                    continue
+                gpio = item.get("gpio", item.get("pin", item.get("index")))
+                if gpio is not None:
+                    names[int(gpio)] = str(item["name"])
+    return names
+
+
 def write_json_docs(docs: Iterable[JsonDoc], out: TextIO) -> None:
     for doc in docs:
         out.write(json.dumps(doc, separators=(",", ":")) + "\n")
@@ -163,6 +230,8 @@ def capture_summary(capture: LogicCapture) -> Iterator[JsonDoc]:
         "pin_count": capture.pin_count,
         "sample_rate": capture.sample_rate,
         "samples": capture.samples,
+        "sample_start": capture.sample_offset,
+        "sample_end": capture.sample_offset + capture.samples,
         "duration_us": capture.duration_us,
         "record_bits": capture.record_bits,
         "words": len(capture.words),
@@ -210,6 +279,7 @@ def measure_pin(capture: LogicCapture, pin_index: int) -> JsonDoc:
         "type": "logic_measure",
         "capture_id": capture.capture_id,
         "gpio": capture.gpio_for_index(pin_index),
+        "name": capture.channel_label(pin_index),
         "high_samples": high_samples,
         "low_samples": low_samples,
         "duty_cycle": high_samples / capture.samples if capture.samples else 0.0,
@@ -291,8 +361,9 @@ def decode_uart(
                 "proto": "uart",
                 "capture_id": capture.capture_id,
                 "gpio": capture.gpio_for_index(pin_index),
-                "start_sample": start,
-                "end_sample": end,
+                "name": capture.channel_label(pin_index),
+                "start_sample": capture.absolute_sample(start),
+                "end_sample": capture.absolute_sample(end),
                 "start_us": capture.sample_time_us(start),
                 "end_us": capture.sample_time_us(end),
                 "baud": baud,
@@ -386,7 +457,7 @@ def spi_word_doc(
         "proto": "spi",
         "capture_id": capture.capture_id,
         "frame": frame,
-        "sample": sample,
+        "sample": capture.absolute_sample(sample),
         "t_us": capture.sample_time_us(sample),
         "bits": max(len(mosi_bits), len(miso_bits)),
         "partial": partial,
@@ -459,8 +530,8 @@ def decode_i2c(capture: LogicCapture, sda_pin: int, scl_pin: int) -> Iterator[Js
                         "proto": "i2c",
                         "capture_id": capture.capture_id,
                         "event": "address",
-                        "start_sample": bit_start,
-                        "end_sample": sample,
+                        "start_sample": capture.absolute_sample(bit_start),
+                        "end_sample": capture.absolute_sample(sample),
                         "start_us": capture.sample_time_us(bit_start),
                         "end_us": capture.sample_time_us(sample),
                         "address": value >> 1,
@@ -475,8 +546,8 @@ def decode_i2c(capture: LogicCapture, sda_pin: int, scl_pin: int) -> Iterator[Js
                         "proto": "i2c",
                         "capture_id": capture.capture_id,
                         "event": "data",
-                        "start_sample": bit_start,
-                        "end_sample": sample,
+                        "start_sample": capture.absolute_sample(bit_start),
+                        "end_sample": capture.absolute_sample(sample),
                         "start_us": capture.sample_time_us(bit_start),
                         "end_us": capture.sample_time_us(sample),
                         "value": value,
@@ -492,7 +563,7 @@ def i2c_event(capture: LogicCapture, event: str, sample: int) -> JsonDoc:
         "proto": "i2c",
         "capture_id": capture.capture_id,
         "event": event,
-        "sample": sample,
+        "sample": capture.absolute_sample(sample),
         "t_us": capture.sample_time_us(sample),
     }
 
@@ -500,7 +571,7 @@ def i2c_event(capture: LogicCapture, event: str, sample: int) -> JsonDoc:
 def warning(proto: str, msg: str, sample: Optional[int] = None, capture: Optional[LogicCapture] = None) -> JsonDoc:
     doc: JsonDoc = {"type": "logic_warning", "proto": proto, "msg": msg}
     if sample is not None:
-        doc["sample"] = sample
+        doc["sample"] = capture.absolute_sample(sample) if capture is not None else sample
     if capture is not None and sample is not None:
         doc["t_us"] = capture.sample_time_us(sample)
         doc["capture_id"] = capture.capture_id
@@ -510,10 +581,10 @@ def warning(proto: str, msg: str, sample: Optional[int] = None, capture: Optiona
 def export_csv(capture: LogicCapture, output: str) -> None:
     with open(output, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["sample", "t_us"] + [f"gpio{capture.gpio_for_index(i)}" for i in range(capture.pin_count)])
+        writer.writerow(["sample", "t_us"] + [capture.channel_label(i) for i in range(capture.pin_count)])
         for sample in range(capture.samples):
             writer.writerow(
-                [sample, f"{capture.sample_time_us(sample):.6f}"]
+                [capture.absolute_sample(sample), f"{capture.sample_time_us(sample):.6f}"]
                 + [capture.level_at_index(sample, pin) for pin in range(capture.pin_count)]
             )
 
@@ -526,9 +597,10 @@ def export_vcd(capture: LogicCapture, output: str) -> None:
         handle.write("$timescale 1 ns $end\n")
         handle.write("$scope module rpmon $end\n")
         for pin_index, ident in enumerate(identifiers):
-            handle.write(f"$var wire 1 {ident} gpio{capture.gpio_for_index(pin_index)} $end\n")
+            handle.write(f"$var wire 1 {ident} {vcd_signal_name(capture, pin_index)} $end\n")
         handle.write("$upscope $end\n$enddefinitions $end\n")
-        handle.write("#0\n")
+        start_ns = round(capture.sample_offset * 1_000_000_000 / capture.sample_rate)
+        handle.write(f"#{start_ns}\n")
         levels = [capture.level_at_index(0, pin) for pin in range(capture.pin_count)]
         for ident, level in zip(identifiers, levels):
             handle.write(f"{level}{ident}\n")
@@ -540,7 +612,7 @@ def export_vcd(capture: LogicCapture, output: str) -> None:
                     levels[pin_index] = level
                     changes.append((ident, level))
             if changes:
-                timestamp_ns = round(sample * 1_000_000_000 / capture.sample_rate)
+                timestamp_ns = round(capture.absolute_sample(sample) * 1_000_000_000 / capture.sample_rate)
                 handle.write(f"#{timestamp_ns}\n")
                 for ident, level in changes:
                     handle.write(f"{level}{ident}\n")
@@ -561,9 +633,21 @@ def vcd_identifiers(count: int) -> List[str]:
     return identifiers
 
 
+def vcd_signal_name(capture: LogicCapture, pin_index: int) -> str:
+    label = capture.channel_label(pin_index)
+    safe = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in label.strip())
+    if not safe:
+        safe = f"gpio{capture.gpio_for_index(pin_index)}"
+    if safe[0].isdigit():
+        safe = f"gpio{capture.gpio_for_index(pin_index)}_{safe}"
+    if not safe.startswith(f"gpio{capture.gpio_for_index(pin_index)}"):
+        safe = f"gpio{capture.gpio_for_index(pin_index)}_{safe}"
+    return safe
+
+
 def decode_command(args: Any) -> int:
     try:
-        capture = LogicCapture.from_jsonl(args.input, args.capture_id)
+        capture = LogicCapture.from_jsonl(args.input, args.capture_id).sliced(args.start_sample, args.end_sample)
         docs: Iterable[JsonDoc]
         if args.decoder == "summary":
             docs = capture_summary(capture)
@@ -605,7 +689,7 @@ def decode_command(args: Any) -> int:
 
 def export_command(args: Any) -> int:
     try:
-        capture = LogicCapture.from_jsonl(args.input, args.capture_id)
+        capture = LogicCapture.from_jsonl(args.input, args.capture_id).sliced(args.start_sample, args.end_sample)
         if args.format == "csv":
             export_csv(capture, args.output)
         elif args.format == "vcd":
@@ -622,4 +706,3 @@ def export_command(args: Any) -> int:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise LogicDecodeError(message)
-
