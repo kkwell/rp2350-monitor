@@ -235,7 +235,12 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         channels_.list_json(channels, sizeof(channels));
         logic_.status_json(logic, sizeof(logic));
         events_.stats_json(buffers, sizeof(buffers));
-        snprintf(extra, sizeof(extra), "%s,%s,%s,%s", wifi, channels, logic, buffers);
+        snprintf(extra, sizeof(extra), "\"version\":\"%s\",\"board\":\"pico2_w\",%s,%s,%s,%s",
+                 kFirmwareVersion,
+                 wifi,
+                 channels,
+                 logic,
+                 buffers);
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;
     }

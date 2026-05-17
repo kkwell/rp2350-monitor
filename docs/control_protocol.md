@@ -26,7 +26,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.8.0","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.8.1","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -125,6 +125,8 @@ The response includes a `buffers` object with telemetry queue health:
 
 ```json
 {
+  "version": "0.8.1",
+  "board": "pico2_w",
   "buffers": {
     "event_capacity": 128,
     "channel_event_capacity": 16,
@@ -355,6 +357,7 @@ Response:
     "pull_modes": ["none", "up", "down"],
     "per_pin_pull": true,
     "pin_pull_field": "pin_pulls",
+    "pretrigger_single_fix": true,
     "pattern_mask_bits_max": 23,
     "burst_marks_max": 16,
     "host_decoders": ["summary", "bursts", "edges", "uart", "spi", "i2c"],

@@ -9,7 +9,7 @@ the same live telemetry path plus per-channel replay buffers.
 Current measured firmware size:
 
 ```text
-text 493904 bytes
+text 494104 bytes
 bss  404728 bytes
 ```
 

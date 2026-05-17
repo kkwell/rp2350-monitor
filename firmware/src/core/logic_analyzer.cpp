@@ -262,6 +262,12 @@ bool LogicAnalyzer::start(char *err, size_t err_len) {
                           true);
 
     bus_ctrl_hw->priority |= BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
+    capture_start_sample_ = 0;
+    scan_next_sample_ = scan_trigger_mode() ? pre_samples_ : 0;
+    trigger_sample_ = 0;
+    trigger_found_ = trigger_pin_ < 0 && trigger_mode_ != LogicTriggerMode::Pattern;
+    burst_found_ = 0;
+    std::memset(burst_samples_, 0, sizeof(burst_samples_));
     if (!scan_trigger_mode() && trigger_pin_ >= 0) {
         if (trigger_mode_ == LogicTriggerMode::Rising) {
             pio_sm_exec(pio_, static_cast<uint>(sm_), pio_encode_wait_gpio(false, static_cast<uint>(trigger_pin_)));
@@ -338,9 +344,10 @@ void LogicAnalyzer::poll(EventBus &events) {
     if (scan_trigger_mode()) {
         scan_available_samples();
         uint32_t samples_ready = available_samples();
-        bool desired_bursts = burst_found_ >= burst_count_;
-        bool window_ready = trigger_found_ && samples_ready >= trigger_sample_ + post_samples_;
-        if (desired_bursts || window_ready) {
+        bool desired_bursts = burst_count_ > 1 && burst_found_ >= burst_count_;
+        bool single_window_ready = burst_count_ <= 1 && trigger_found_ && samples_ready >= trigger_sample_ + post_samples_;
+        bool burst_window_ready = desired_bursts && samples_ready >= burst_samples_[burst_found_ - 1] + post_samples_;
+        if (single_window_ready || burst_window_ready) {
             char err[120] = {};
             if (finish_scanned_capture(err, sizeof(err))) {
                 finish_capture(&events);
@@ -408,7 +415,7 @@ void LogicAnalyzer::status_json(char *out, size_t out_len) const {
 
 void LogicAnalyzer::caps_json(char *out, size_t out_len) const {
     snprintf(out, out_len,
-             "\"logic_caps\":{\"engine\":\"pio2_dma\",\"pin_ranges\":[{\"first\":0,\"last\":22},{\"first\":26,\"last\":28}],\"contiguous_pins\":true,\"pin_count_max\":23,\"sample_rate_max\":%lu,\"buffer_words\":%u,\"buffer_bytes\":%u,\"upload_chunk_bytes\":%u,\"encoding\":\"u32-le-packed\",\"capture_modes\":[\"single\",\"pretrigger\",\"burst\"],\"triggers\":[\"none\",\"level\",\"rising\",\"falling\",\"pattern\"],\"pull_modes\":[\"none\",\"up\",\"down\"],\"per_pin_pull\":true,\"pin_pull_field\":\"pin_pulls\",\"pattern_mask_bits_max\":23,\"burst_marks_max\":%u,\"host_decoders\":[\"summary\",\"bursts\",\"edges\",\"uart\",\"spi\",\"i2c\"],\"host_exports\":[\"csv\",\"vcd\"],\"reserved_features\":[\"external_psram\",\"sigrok_bridge\"]}",
+             "\"logic_caps\":{\"engine\":\"pio2_dma\",\"pin_ranges\":[{\"first\":0,\"last\":22},{\"first\":26,\"last\":28}],\"contiguous_pins\":true,\"pin_count_max\":23,\"sample_rate_max\":%lu,\"buffer_words\":%u,\"buffer_bytes\":%u,\"upload_chunk_bytes\":%u,\"encoding\":\"u32-le-packed\",\"capture_modes\":[\"single\",\"pretrigger\",\"burst\"],\"triggers\":[\"none\",\"level\",\"rising\",\"falling\",\"pattern\"],\"pull_modes\":[\"none\",\"up\",\"down\"],\"per_pin_pull\":true,\"pin_pull_field\":\"pin_pulls\",\"pretrigger_single_fix\":true,\"pattern_mask_bits_max\":23,\"burst_marks_max\":%u,\"host_decoders\":[\"summary\",\"bursts\",\"edges\",\"uart\",\"spi\",\"i2c\"],\"host_exports\":[\"csv\",\"vcd\"],\"reserved_features\":[\"external_psram\",\"sigrok_bridge\"]}",
              static_cast<unsigned long>(clk_sys_hz()),
              static_cast<unsigned>(kLogicCaptureWords),
              static_cast<unsigned>(kLogicCaptureWords * sizeof(uint32_t)),
@@ -580,11 +587,12 @@ bool LogicAnalyzer::trigger_matches(uint32_t sample, bool &matched) const {
     }
     uint32_t current = raw_sample_bits(sample);
     uint32_t previous = sample == 0 ? current : raw_sample_bits(sample - 1);
+    uint32_t first_scan_sample = scan_trigger_mode() ? pre_samples_ : 0;
     if (trigger_mode_ == LogicTriggerMode::Pattern) {
         bool now = (current & trigger_mask_) == trigger_value_;
         bool before = (previous & trigger_mask_) == trigger_value_;
         matched = now;
-        return now && (sample == 0 || !before);
+        return now && (sample == first_scan_sample || !before);
     }
     if (trigger_pin_ < 0) {
         matched = true;
@@ -602,7 +610,7 @@ bool LogicAnalyzer::trigger_matches(uint32_t sample, bool &matched) const {
         return !now && before;
     }
     matched = now == trigger_level_;
-    return matched && (sample == 0 || before != now);
+    return matched && (sample == first_scan_sample || before != now);
 }
 
 void LogicAnalyzer::scan_available_samples() {
