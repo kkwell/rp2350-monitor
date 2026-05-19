@@ -99,17 +99,21 @@ Flow:
 
 1. `logic_config` validates a contiguous exposed GPIO range and claims those
    pins through `PinManager`.
-2. `logic_start` claims one PIO2 state machine and one DMA channel.
+2. `logic_start` claims one PIO2 state machine. Linear captures claim one DMA
+   channel; pre-trigger ring captures claim two chained DMA channels.
 3. Firmware applies the default `pull` plus any `pin_pulls` per-GPIO overrides.
-4. PIO executes a single `in pins, n` instruction at the requested sample rate
-   and autopushes packed samples into the RX FIFO.
-5. DMA copies RX FIFO words into the fixed SRAM capture buffer.
-6. For `pre_samples`, `trigger_mode:"pattern"`, or `burst_count > 1`, firmware
-   scans completed DMA words, records trigger/burst sample markers, and uploads
-   a bounded window from the SRAM-backed search stream.
-7. Completion is reported as a status event; runtime PIO/DMA resources are
+4. PIO executes deterministic sampling at the requested sample rate and
+   autopushes packed samples into the RX FIFO.
+5. DMA copies RX FIFO words into the fixed SRAM capture buffer. Triggered
+   captures use a two-half ping-pong circular DMA ring inside that SRAM area.
+6. For level/edge pre-trigger captures, the PIO sampling program tests the
+   trigger pin with `jmp pin`; for full-width pattern trigger it compares the
+   sampled word in PIO. The PIO program captures the requested post-trigger
+   region, then raises a PIO IRQ.
+7. Firmware freezes a contiguous pre/post window for upload.
+8. Completion is reported as a status event; runtime PIO/DMA resources are
    released while the capture buffer stays available.
-8. `logic_read` uploads a `type:"logic_meta"` line plus `type:"logic"` JSONL
+9. `logic_read` uploads a `type:"logic_meta"` line plus `type:"logic"` JSONL
    chunks over the active USB or TCP transport.
 
 The implementation follows the same design pattern as Raspberry Pi's

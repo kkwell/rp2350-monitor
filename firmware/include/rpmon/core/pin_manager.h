@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "rpmon/config.h"
@@ -27,9 +28,9 @@ public:
     bool claim(int gpio, int channel_id, PinRole role);
     void release_channel(int channel_id);
     int owner(int gpio) const;
-    bool validate_uart(int instance, int tx, int rx) const;
-    bool validate_spi(int instance, int sck, int mosi, int miso, int cs) const;
-    bool validate_i2c(int instance, int sda, int scl) const;
+    bool validate_uart(int instance, int tx, int rx, char *err = nullptr, size_t err_len = 0) const;
+    bool validate_spi(int instance, int sck, int mosi, int miso, int cs, char *err = nullptr, size_t err_len = 0) const;
+    bool validate_i2c(int instance, int sda, int scl, char *err = nullptr, size_t err_len = 0) const;
     void pins_json(char *out, size_t out_len) const;
 
 private:

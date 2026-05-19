@@ -13,8 +13,7 @@ i2c_inst_t *I2cChannel::i2c() const {
 }
 
 bool I2cChannel::configure(const ChannelConfig &config, PinManager &pins, char *err, size_t err_len) {
-    if (!pins.validate_i2c(config.instance, config.pins.sda, config.pins.scl)) {
-        snprintf(err, err_len, "invalid I2C%d SDA/SCL pin mapping", config.instance);
+    if (!pins.validate_i2c(config.instance, config.pins.sda, config.pins.scl, err, err_len)) {
         return false;
     }
     if (!pins.claim(config.pins.sda, config.id, PinRole::I2cSda) ||
@@ -108,4 +107,3 @@ void I2cChannel::describe_json(char *out, size_t out_len) const {
 }
 
 } // namespace rpmon
-

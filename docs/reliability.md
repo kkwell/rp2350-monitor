@@ -9,8 +9,8 @@ the same live telemetry path plus per-channel replay buffers.
 Current measured firmware size:
 
 ```text
-text 494104 bytes
-bss  404728 bytes
+text 497000 bytes
+bss  404864 bytes
 ```
 
 `text` lives in flash. `bss` is static SRAM and includes lwIP buffers, device
@@ -31,7 +31,9 @@ compile time:
   bytes of static SRAM.
 - Logic analyzer upload chunk: `kLogicUploadChunkBytes = 512` bytes per JSON
   bulk line before hex expansion.
-- Logic analyzer burst marker storage: `kLogicBurstMarksMax = 16` samples.
+- Logic analyzer burst marker storage remains in the metadata format, but
+  firmware `0.8.9` accepts only `burst_count:1`; multi-burst hardware timestamp
+  support is reserved.
 
 ## Event Queues
 
@@ -136,9 +138,29 @@ and `logic_status`. Important fields:
 - `logic.pin_pulls`: effective per-GPIO analyzer input bias after defaults and
   overrides are merged.
 - `logic.pre_samples` / `logic.post_samples`: requested trigger window shape.
-- `logic.search_samples`: maximum SRAM-backed trigger search window.
-- `logic.trigger_found` / `logic.trigger_sample`: trigger scan result.
-- `logic.burst_found`: number of burst markers captured.
+- `logic.search_samples`: legacy compatibility field. On firmware reporting
+  `logic_caps.ring_pretrigger:true`, this is the active ring capacity and no
+  longer limits trigger wait time.
+- `logic.ring_mode`: true for circular DMA trigger/pre-trigger captures.
+- `logic.pio_trigger_mode`: true when level/rising/falling or full-width pattern
+  detection is running inside the PIO sampling program. The CPU does not scan
+  ring samples to find triggers.
+- `logic.pio_trigger_irq`: transient flag set after the PIO trigger program
+  raises completion IRQ and before DMA-visible samples are sufficient to freeze
+  the capture. A stuck true value is a diagnosable finalization fault, not a
+  reason to spam status events.
+- `logic.sample_word_mode`: true when the PIO program stores one raw sample per
+  SRAM word internally, currently used for pattern trigger. Upload remains
+  packed and backward compatible.
+- `logic.ring_dma_mode`: `pingpong` for open-ended trigger waits. The firmware
+  uses two chained DMA halves and reloads the completed half from DMA IRQ
+  context instead of using one long address-ring DMA transfer.
+- `logic.ring_dma_halves_completed`: diagnostic counter for the active ring
+  capture. It should increase while the analyzer waits for an external trigger.
+- `logic.scan_budget_samples` / `logic.scan_dropped_samples`: compatibility
+  fields, always `0` when `logic_caps.firmware_trigger_scan:false`.
+- `logic.trigger_found` / `logic.trigger_sample`: trigger result.
+- `logic.burst_found`: `1` for a completed triggered capture.
 
 Use `logic_caps` before allocating host-side storage or presenting a capture
 configuration UI. It is the stable source for buffer size, upload chunk size,
@@ -167,6 +189,17 @@ features.
   `msg`; they are not added to the telemetry queue.
 - Wi-Fi connection failure: AP recovery is started and per-profile
   `last_error` records readable failure text.
+
+## Flash Recovery
+
+Firmware 0.8.9 removes CPU-side trigger scanning from the logic analyzer path
+and uses a ping-pong DMA pre-trigger ring, so USB CDC, Wi-Fi, HTTP, and
+reset-to-BOOTSEL servicing continue while an open-ended trigger is waiting.
+If an older image has already stopped servicing the USB control path, automatic
+`picotool -f/-F` reboot may only report that the device was asked to reboot and
+then keep seeing the application-mode USB serial device. In that state, recover
+through ROM BOOTSEL: hold BOOTSEL, press RESET or reconnect USB, then run the
+standard `picotool load -x build/rp2350_monitor.uf2` flow.
 
 ## Product Guidance
 

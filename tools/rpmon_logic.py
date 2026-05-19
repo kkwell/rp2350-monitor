@@ -518,19 +518,14 @@ def decode_spi(
     was_active = is_active(0)
     for sample in range(1, capture.samples):
         active = is_active(sample)
-        if not active:
-            if was_active and (mosi_bits or miso_bits):
-                yield spi_word_doc(capture, frame, sample, mosi_bits, miso_bits, word_bits, bit_order, partial=True)
-                frame += 1
-                mosi_bits.clear()
-                miso_bits.clear()
-            was_active = False
-            prev_sck = capture.level_at_index(sample, sck)
-            continue
         current_sck = capture.level_at_index(sample, sck)
         if current_sck != prev_sck:
             leading = prev_sck == cpol and current_sck != cpol
-            if (cpha == 0 and leading) or (cpha == 1 and not leading):
+            sample_edge = (cpha == 0 and leading) or (cpha == 1 and not leading)
+            # Low sample rates can quantize the last sampling edge and CS
+            # deassertion into the same sample. Treat that edge as valid if
+            # the previous sample was still inside the selected SPI frame.
+            if sample_edge and (active or was_active):
                 if mosi is not None:
                     mosi_bits.append(capture.level_at_index(sample, mosi))
                 if miso is not None:
@@ -541,6 +536,15 @@ def decode_spi(
                     frame += 1
                     mosi_bits.clear()
                     miso_bits.clear()
+        if not active:
+            if was_active and (mosi_bits or miso_bits):
+                yield spi_word_doc(capture, frame, sample, mosi_bits, miso_bits, word_bits, bit_order, partial=True)
+                frame += 1
+                mosi_bits.clear()
+                miso_bits.clear()
+            was_active = False
+            prev_sck = current_sck
+            continue
         was_active = True
         prev_sck = current_sck
     if mosi_bits or miso_bits:

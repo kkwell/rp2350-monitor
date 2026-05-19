@@ -33,7 +33,7 @@ Comparison against the local reference project:
 | Channel labels | GUI supports channel names | `--channel-name GPIO=NAME` and settings `channel_names` are preserved; CSV/VCD/summary use labels |
 | Region analysis | Viewer can measure selected regions | `logic_decode` and `logic_export` support `--start-sample` / `--end-sample` windows |
 | Protocol decode | Sigrok-oriented GUI decoder ecosystem | CLI-native JSON decoders for summary, bursts, edges, UART, SPI, and I2C; Sigrok bridge remains an extension point |
-| Trigger modes | Simple/complex trigger plus burst in firmware | No trigger, level, rising, falling, pattern, pre-trigger windowing, and burst markers |
+| Trigger modes | Simple/complex trigger plus burst in firmware | No trigger, PIO level, PIO rising, PIO falling, full-width PIO pattern, and ring-buffer pre-trigger windowing |
 
 ## Current RP2350 Monitor Behavior
 
@@ -43,12 +43,30 @@ Firmware responsibilities:
 - Arm PIO2 and DMA for fixed-rate sampling.
 - Support no trigger, level trigger, rising edge trigger, falling edge trigger,
   and pattern trigger.
-- Support pre-trigger windows and burst trigger markers through PIO/DMA
-  continuous sampling plus firmware trigger scanning.
+- Support pre-trigger windows through PIO/DMA circular sampling. Triggered
+  captures keep sampling until the PIO program itself sees a level, edge, or
+  full-width pattern condition, then freeze the requested pre/post window.
 - Optionally apply `pull:"none"`, `pull:"up"`, or `pull:"down"` as the default
   analyzer input bias, with `pin_pulls` per-GPIO overrides before PIO takes
   ownership.
 - Store packed samples in a fixed 131,072-byte SRAM buffer.
+- Use a 16,384-word ping-pong DMA ring inside that SRAM buffer for open-ended
+  triggered waits; hosts can discover this through `logic_caps.ring_buffer_words`
+  and `logic_caps.ring_dma_mode`.
+- Detect single-pin `level`, `rising`, and `falling` triggers inside the PIO
+  sampling program with `jmp pin`, then continue sampling the requested
+  post-trigger window before raising a PIO IRQ.
+- Detect full-width `pattern` triggers inside the PIO program by comparing the
+  captured sample word with `trigger_value`. Because no CPU-side ring scanning is
+  used, `trigger_mask` must cover the configured `pin_count`; reduce `pin_count`
+  to the pins involved in the pattern.
+- Treat PIO trigger IRQ as a completion marker and freeze the capture only after
+  DMA-visible samples cover the requested post-trigger window. This prevents a
+  transient DMA/FIFO lag from turning into repeated control-channel error
+  output.
+- Reject `burst_count > 1` until a hardware burst timestamp path is added. The
+  firmware no longer scans ring samples in the control loop to synthesize burst
+  markers.
 - Upload raw `type:"logic"` chunks over USB CDC or Wi-Fi TCP.
 - Report machine-readable capture limits through `logic_caps`.
 
@@ -69,6 +87,18 @@ Host responsibilities:
   export a bounded sample window without recapturing.
 
 ## Examples
+
+Hardware loopback regression wiring used by `tools/rpmon_logic_loopback_test.py`:
+
+```text
+GP0 -> GP18
+GP1 -> GP19
+GP2 -> GP16
+GP3 -> GP17
+```
+
+This wiring supports both GPIO trigger tests and an SPI0 mirror test where
+GP2/GP3/GP0/GP1 are native SPI pins and GP16..GP19 are logic-analyzer listeners.
 
 Capture once and decode UART:
 
@@ -95,15 +125,14 @@ Settings-file capture:
 ```json
 {
   "pin_base": 16,
-  "pin_count": 4,
+  "pin_count": 2,
   "sample_rate": 10000000,
   "samples": 4096,
   "pre_samples": 512,
   "post_samples": 3584,
-  "search_samples": 32768,
-  "burst_count": 4,
+  "burst_count": 1,
   "pull": "down",
-  "pin_pulls": {"18": "up", "19": "none"},
+  "pin_pulls": {"16": "up", "17": "none"},
   "trigger": {"mode": "pattern", "mask": "0x3", "value": "0x2"},
   "channel_names": {"16": "uart_rx", "17": "uart_tx", "18": "sck", "19": "mosi"}
 }

@@ -3,6 +3,25 @@
 This document is the contract for external host tools that control the Pico 2 W
 firmware over USB CDC or Wi-Fi TCP.
 
+## Discovery Contract
+
+RP2350-Monitor is the self-discovery firmware baseline for Pico/RP2350 GUI and
+AI tooling. Firmware variants must remain protocol-compatible with this
+contract. Do not ship a feature-specific UF2 that removes discovery commands or
+transports.
+
+The minimum discovery surface is:
+
+- `hello`: returns firmware `version`, `board`, and available `links`
+- `status`: returns firmware, Wi-Fi, channel, buffer, and logic state
+- `logic_caps`: returns analyzer ranges, limits, trigger modes, pulls, decoder
+  capabilities, and compatibility flags
+- `pins`, `channels`, `events_read`: support UI ownership and telemetry views
+- USB CDC, Wi-Fi TCP port `4242`, setup AP recovery, and HTTP `/api/status`
+
+Host tools should verify `hello -> status -> logic_caps -> pins/channels`
+before enabling GPIO, UART, I2C, SPI, Wi-Fi, or logic-analyzer workflows.
+
 ## Transports
 
 - USB CDC serial: 115200 baud is used by the reference CLI, but the firmware
@@ -26,7 +45,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.8.1","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.8.9","board":"pico2_w","links":["wifi","usb"]}
 ```
 
 Status event:
@@ -125,7 +144,7 @@ The response includes a `buffers` object with telemetry queue health:
 
 ```json
 {
-  "version": "0.8.1",
+  "version": "0.8.9",
   "board": "pico2_w",
   "buffers": {
     "event_capacity": 128,
@@ -227,6 +246,13 @@ rejects duplicate native instances, invalid alternate-function pin mappings,
 already-owned GPIOs, and channel-table overflow with `ok:false` responses. See
 [resource_limits.md](resource_limits.md) for the exact limits and messages.
 
+Native UART/SPI/I2C pin choices are validated by peripheral instance and signal
+role. A host may combine any valid pins from the same instance's signal lists;
+the pins do not need to come from one adjacent header group. For example,
+`SPI0 sck=2, mosi=7, miso=16` is valid, while `SPI0 sck=2, mosi=11` is rejected
+because GPIO11 is a SPI1 MOSI/TX pin. Invalid mappings return signal-specific
+messages such as `invalid SPI0 mosi GPIO11; valid mosi GPIOs: 3,7,19`.
+
 ## UART
 
 Configure UART:
@@ -262,6 +288,8 @@ number of bytes as the write payload.
 ```
 
 SPI emits `event` frames with `proto:"spi"` and separate `tx`/`rx` directions.
+`cs` is a firmware-controlled manual GPIO output in this version. It may be any
+free exposed GPIO or omitted, and it must not share the SCK, MOSI, or MISO GPIO.
 This first firmware version is a transaction engine; passive SPI sniffing is a
 future PIO driver.
 
@@ -350,19 +378,29 @@ Response:
     "sample_rate_max": 150000000,
     "buffer_words": 32768,
     "buffer_bytes": 131072,
+    "ring_buffer_words": 16384,
+    "ring_buffer_bytes": 65536,
     "upload_chunk_bytes": 512,
     "encoding": "u32-le-packed",
-    "capture_modes": ["single", "pretrigger", "burst"],
+    "capture_modes": ["single", "pretrigger"],
     "triggers": ["none", "level", "rising", "falling", "pattern"],
     "pull_modes": ["none", "up", "down"],
     "per_pin_pull": true,
     "pin_pull_field": "pin_pulls",
     "pretrigger_single_fix": true,
+    "ring_pretrigger": true,
+    "open_ended_trigger_wait": true,
+    "ring_dma_mode": "pingpong",
+    "ring_dma_halves": 2,
+    "pio_simple_trigger": true,
+    "pio_pattern_trigger": true,
+    "firmware_trigger_scan": false,
     "pattern_mask_bits_max": 23,
-    "burst_marks_max": 16,
+    "pattern_mask_full_width": true,
+    "burst_marks_max": 1,
     "host_decoders": ["summary", "bursts", "edges", "uart", "spi", "i2c"],
     "host_exports": ["csv", "vcd"],
-    "reserved_features": ["external_psram", "sigrok_bridge"]
+    "reserved_features": ["hardware_burst_marks", "external_psram", "sigrok_bridge"]
   }
 }
 ```
@@ -397,17 +435,30 @@ then the requested edge.
 Advanced capture fields:
 
 - `pre_samples`: samples to keep before the first trigger. Non-zero values use
-  PIO/DMA continuous sampling and firmware-side trigger scanning.
+  PIO/DMA circular sampling. The PIO program itself detects the trigger and
+  keeps sampling until the requested post-trigger window is complete.
 - `post_samples`: samples expected after a trigger. If omitted, the host should
   treat `samples - pre_samples` as the post window.
-- `search_samples`: maximum samples to scan while waiting for a trigger. `0`
-  lets firmware use the largest SRAM-backed search window that fits.
-- `burst_count`: requested repeated trigger marks, capped by
-  `logic_caps.burst_marks_max`.
+- `search_samples`: legacy compatibility field. With
+  `logic_caps.ring_pretrigger:true`, trigger waits are open-ended and this field
+  reports the SRAM-backed ring capacity instead of limiting trigger wait time.
+- `scan_budget_samples` / `scan_dropped_samples`: retained compatibility fields.
+  They are always `0` when `logic_caps.firmware_trigger_scan:false`.
+- `ring_dma_mode`: `pingpong` means triggered pre-capture uses two chained DMA
+  halves and a DMA IRQ to reload the completed half. This avoids the old
+  single-DMA address-ring behavior while keeping trigger detection in PIO.
+- `ring_dma_halves_completed`: diagnostic counter for the active pre-trigger
+  ring. It increases while the capture waits for an external trigger.
+- `burst_count`: only `1` is accepted in the PIO-only trigger implementation.
+  `burst_count > 1` returns `ok:false` until hardware burst timestamp support is
+  implemented.
 - `trigger_mode:"pattern"`: match a bit pattern in the captured contiguous pin
   group. Bit 0 maps to `pin_base`, bit 1 maps to `pin_base + 1`, and so on.
 - `trigger_mask`: relative pin mask for pattern matching.
 - `trigger_value`: relative pin value after applying `trigger_mask`.
+  With `pattern_mask_full_width:true`, `trigger_mask` must cover the whole
+  captured range. To match GP16=0 and GP17=1, configure `pin_base:16`,
+  `pin_count:2`, `trigger_mask:3`, `trigger_value:2`.
 
 Pattern/pre-trigger example:
 
@@ -415,18 +466,17 @@ Pattern/pre-trigger example:
 {
   "cmd": "logic_config",
   "pin_base": 16,
-  "pin_count": 4,
+  "pin_count": 2,
   "sample_rate": 10000000,
   "samples": 4096,
   "pull": "none",
-  "pin_pulls": {"16": "up", "17": "none", "18": "down", "19": "none"},
+  "pin_pulls": {"16": "up", "17": "none"},
   "pre_samples": 512,
   "post_samples": 3584,
-  "search_samples": 32768,
   "trigger_mode": "pattern",
   "trigger_mask": 3,
   "trigger_value": 2,
-  "burst_count": 4
+  "burst_count": 1
 }
 ```
 
@@ -452,24 +502,24 @@ Metadata line:
   "type": "logic_meta",
   "capture_id": 7,
   "pin_base": 16,
-  "pin_count": 4,
+  "pin_count": 2,
   "sample_rate": 10000000,
   "samples": 4096,
   "record_bits": 32,
   "sample_offset": 1024,
   "pull": "none",
-  "pin_pulls": {"16": "up", "17": "none", "18": "down", "19": "none"},
+  "pin_pulls": {"16": "up", "17": "none"},
   "pre_samples": 512,
   "post_samples": 3584,
   "trigger_found": true,
-  "trigger_sample": 1536,
+  "trigger_sample": 512,
   "trigger_pin": -1,
   "trigger_mode": "pattern",
   "trigger_mask": 3,
   "trigger_value": 2,
-  "burst_count": 4,
-  "burst_found": 2,
-  "burst_samples": [1536, 2200]
+  "burst_count": 1,
+  "burst_found": 1,
+  "burst_samples": [512]
 }
 ```
 
@@ -495,6 +545,23 @@ Data encoding:
 This version captures into RAM first and then uploads over USB or TCP. It
 does not provide infinite streaming at the configured sample rate; sustained
 capture length is bounded by `buffer_words_max`.
+
+`logic_status` and the nested `status.logic` object also include:
+
+- `ring_mode`: true for trigger/pre-trigger captures using the circular
+  DMA buffer.
+- `pio_trigger_mode`: true when a `level`, `rising`, `falling`, or full-width
+  `pattern` trigger is being detected in the PIO sampling program itself. In
+  this mode the control CPU does not scan samples to find the trigger.
+- `pio_trigger_irq`: true after the PIO trigger program has raised its completion
+  IRQ and firmware is waiting for DMA-visible samples to catch up before
+  freezing the capture. It should normally be transient; if it stays true, host
+  software can call `logic_stop` and report a capture finalization fault.
+- `sample_word_mode`: true when the PIO trigger program stores one raw sample
+  per SRAM word internally, currently used for pattern trigger. `logic_read`
+  still uploads the stable packed `u32-le-packed` encoding.
+- `scan_budget_samples` / `scan_dropped_samples`: compatibility fields, always
+  `0` when `firmware_trigger_scan:false`.
 
 Host-side logic analysis:
 
@@ -523,8 +590,7 @@ capture intent:
   "samples": 4096,
   "pre_samples": 512,
   "post_samples": 3584,
-  "search_samples": 32768,
-  "burst_count": 4,
+  "burst_count": 1,
   "pull": "down",
   "pin_pulls": {"18": "up", "19": "none"},
   "trigger": {"mode": "pattern", "mask": "0x3", "value": "0x2"},

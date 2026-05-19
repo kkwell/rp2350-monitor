@@ -12,7 +12,8 @@ Current version:
 - Native UART, SPI, I2C, and GPIO channel layers
 - PIO2/DMA high-speed logic analyzer for contiguous GPIO capture
 - Machine-readable logic analyzer capability discovery for host software
-- Logic analyzer level/edge/pattern trigger, pre-trigger windowing, and burst markers
+- Logic analyzer PIO level/edge trigger, full-width pattern trigger, and
+  ping-pong DMA pre-trigger windowing without CPU-side trigger scanning
 - Logic analyzer global and per-pin internal pull bias controls
 - Host-side logic analysis for UART, SPI, I2C, bursts, edges, timing summary, sample windows, CSV, and VCD
 - CAN reserved behind a driver interface
@@ -21,6 +22,24 @@ Current version:
 - GitHub Actions CI/release workflows for reproducible UF2 builds
 
 Bluetooth is intentionally not included in this version.
+
+## Self-Discovery Firmware Baseline
+
+All RP2350/Pico feature work must be built on this RP2350-Monitor firmware,
+not on a one-off single-purpose UF2. Host software discovers the board and
+enables UI/tool features through:
+
+- `hello` with firmware version, board id, and available links
+- `status` with Wi-Fi, channel, logic analyzer, and buffer state
+- `logic_caps` for analyzer ranges, limits, triggers, pulls, and decoders
+- `pins`, `channels`, `events_read`, USB CDC, Wi-Fi TCP `4242`, setup AP, and
+  HTTP `GET /api/status`
+
+Any firmware change must preserve those discovery paths before adding or fixing
+GPIO, UART, I2C, SPI, Wi-Fi, or logic-analyzer behavior. The minimum regression
+order is `hello -> status -> logic_caps -> pins/channels -> target feature`.
+If one of those discovery checks fails, the GUI and AI tools may not identify
+the hardware and the build is not releasable.
 
 ## Build
 
@@ -161,15 +180,14 @@ For repeatable host workflows, store capture settings as JSON and pass
 ```json
 {
   "pin_base": 16,
-  "pin_count": 4,
+  "pin_count": 2,
   "sample_rate": 10000000,
   "samples": 4096,
   "pre_samples": 512,
   "post_samples": 3584,
-  "search_samples": 32768,
-  "burst_count": 4,
+  "burst_count": 1,
   "pull": "down",
-  "pin_pulls": {"18": "up", "19": "none"},
+  "pin_pulls": {"16": "up", "17": "none"},
   "trigger": {"mode": "pattern", "mask": "0x3", "value": "0x2"},
   "channel_names": {"16": "uart_rx", "17": "uart_tx"}
 }
@@ -181,6 +199,38 @@ python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX logic_capture --pin-ba
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary --start-sample 100 --end-sample 1100
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder bursts
 ```
+
+Hardware loopback regression test for trigger validation:
+
+```sh
+# Wire GP0->GP18, GP1->GP19, GP2->GP16, and GP3->GP17 before running.
+python3 tools/rpmon_logic_loopback_test.py --serial /dev/tty.usbmodemXXXX
+```
+
+This drives GP2 as the GP16 stimulus, GP3 as the GP17 stimulus, GP0 as the GP18
+stimulus, and GP1 as the GP19 stimulus. It verifies no-trigger capture, falling,
+rising, level-low, GP16=P0/GP17=P1 full-width pattern trigger, rejection of
+`burst_count>1`, and native SPI0 on GP0..GP3 mirrored by logic inputs
+GP16..GP19. The test is intentionally
+single-session because USB CDC JSONL must not be driven by the GUI bridge and a
+second CLI process at the same time.
+
+Wi-Fi-only logic analyzer validation:
+
+```sh
+# Connect the host to RP2350-Monitor-xxxxxx first, or use the board station IP.
+python3 tools/rpmon_wifi_logic_test.py --host 192.168.4.1
+
+# Preferred station-mode validation. USB is used only to read the board's
+# station IP/status; the functional regression still runs through Wi-Fi TCP.
+python3 tools/rpmon_wifi_logic_test.py --serial /dev/tty.usbmodemXXXX
+```
+
+This checks HTTP `/api/status`, then runs the same GPIO trigger and SPI mirror
+regression through TCP port `4242`. If the board reports station `up` but the
+host cannot reach that station IP, the script reports
+`station-up-host-unreachable`; this usually means the router guest network has
+client isolation enabled or the host is not on a peer-visible LAN.
 
 ## Protocol
 

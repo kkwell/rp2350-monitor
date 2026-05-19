@@ -14,8 +14,7 @@ spi_inst_t *SpiChannel::spi() const {
 }
 
 bool SpiChannel::configure(const ChannelConfig &config, PinManager &pins, char *err, size_t err_len) {
-    if (!pins.validate_spi(config.instance, config.pins.sck, config.pins.mosi, config.pins.miso, config.pins.cs)) {
-        snprintf(err, err_len, "invalid SPI%d pin mapping", config.instance);
+    if (!pins.validate_spi(config.instance, config.pins.sck, config.pins.mosi, config.pins.miso, config.pins.cs, err, err_len)) {
         return false;
     }
     if (!pins.claim(config.pins.sck, config.id, PinRole::SpiSck) ||
@@ -121,4 +120,3 @@ void SpiChannel::describe_json(char *out, size_t out_len) const {
 }
 
 } // namespace rpmon
-

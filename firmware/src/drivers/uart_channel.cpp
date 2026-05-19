@@ -13,8 +13,7 @@ uart_inst_t *UartChannel::uart() const {
 }
 
 bool UartChannel::configure(const ChannelConfig &config, PinManager &pins, char *err, size_t err_len) {
-    if (!pins.validate_uart(config.instance, config.pins.tx, config.pins.rx)) {
-        snprintf(err, err_len, "invalid UART%d TX/RX pin mapping", config.instance);
+    if (!pins.validate_uart(config.instance, config.pins.tx, config.pins.rx, err, err_len)) {
         return false;
     }
     if (!pins.claim(config.pins.tx, config.id, PinRole::UartTx) ||
