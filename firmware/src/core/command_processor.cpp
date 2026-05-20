@@ -209,8 +209,8 @@ bool read_logic_pin_pulls(const char *line,
 
 } // namespace
 
-CommandProcessor::CommandProcessor(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, PinManager &pins, EventBus &events)
-    : wifi_(wifi), channels_(channels), logic_(logic), pins_(pins), events_(events) {}
+CommandProcessor::CommandProcessor(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, DebugProbe &probe, PinManager &pins, EventBus &events)
+    : wifi_(wifi), channels_(channels), logic_(logic), probe_(probe), pins_(pins), events_(events) {}
 
 void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     char cmd[40];
@@ -220,8 +220,8 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     }
 
     if (std::strcmp(cmd, "hello") == 0) {
-        char extra[128];
-        snprintf(extra, sizeof(extra), "\"version\":\"%s\",\"board\":\"pico2_w\",\"links\":[\"wifi\",\"usb\"]", kFirmwareVersion);
+        char extra[180];
+        snprintf(extra, sizeof(extra), "\"version\":\"%s\",\"board\":\"pico2_w\",\"links\":[\"wifi\",\"usb\",\"cmsis-dap\"]", kFirmwareVersion);
         events_.publish_response(reply, true, cmd, "ready", extra);
         return;
     }
@@ -230,16 +230,19 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         static char channels[1600];
         char buffers[1800];
         char logic[1600];
-        static char extra[7400];
+        char probe[1200];
+        static char extra[8000];
         wifi_.status_json(wifi, sizeof(wifi));
         channels_.list_json(channels, sizeof(channels));
         logic_.status_json(logic, sizeof(logic));
+        probe_.status_json(probe, sizeof(probe));
         events_.stats_json(buffers, sizeof(buffers));
-        snprintf(extra, sizeof(extra), "\"version\":\"%s\",\"board\":\"pico2_w\",%s,%s,%s,%s",
+        snprintf(extra, sizeof(extra), "\"version\":\"%s\",\"board\":\"pico2_w\",%s,%s,%s,%s,%s",
                  kFirmwareVersion,
                  wifi,
                  channels,
                  logic,
+                 probe,
                  buffers);
         events_.publish_response(reply, true, cmd, "ok", extra);
         return;
@@ -360,6 +363,12 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
         handle_logic_io(line, reply, cmd);
         return;
     }
+    if (std::strcmp(cmd, "probe_caps") == 0 || std::strcmp(cmd, "probe_status") == 0 ||
+        std::strcmp(cmd, "probe_config") == 0 || std::strcmp(cmd, "probe_release") == 0 ||
+        std::strcmp(cmd, "probe_reset") == 0 || std::strcmp(cmd, "probe_dap") == 0) {
+        handle_probe_io(line, reply, cmd);
+        return;
+    }
     if (std::strcmp(cmd, "channels") == 0) {
         char channels[1600];
         channels_.list_json(channels, sizeof(channels));
@@ -368,6 +377,93 @@ void CommandProcessor::handle_line(const char *line, LineSink &reply) {
     }
 
     events_.publish_response(reply, false, cmd, "unknown command");
+}
+
+void CommandProcessor::handle_probe_io(const char *line, LineSink &reply, const char *cmd) {
+    char err[160] = {};
+    if (std::strcmp(cmd, "probe_caps") == 0) {
+        char extra[1200];
+        probe_.caps_json(extra, sizeof(extra));
+        events_.publish_response(reply, true, cmd, "ok", extra);
+        return;
+    }
+    if (std::strcmp(cmd, "probe_status") == 0) {
+        char extra[1200];
+        probe_.status_json(extra, sizeof(extra));
+        events_.publish_response(reply, true, cmd, "ok", extra);
+        return;
+    }
+    if (std::strcmp(cmd, "probe_config") == 0) {
+        int swclk = 2;
+        int swdio = 3;
+        int reset = 1;
+        uint32_t freq_khz = 1000;
+        json_get_int(line, "swclk", swclk);
+        json_get_int(line, "swdio", swdio);
+        json_get_int(line, "reset", reset);
+        json_get_uint32(line, "swclk_khz", freq_khz);
+        json_get_uint32(line, "freq_khz", freq_khz);
+        bool ok = probe_.configure(swclk, swdio, reset, freq_khz, err, sizeof(err));
+        char extra[1200];
+        probe_.status_json(extra, sizeof(extra));
+        events_.publish_response(reply, ok, cmd, ok ? "probe configured" : err, ok ? extra : nullptr);
+        return;
+    }
+    if (std::strcmp(cmd, "probe_release") == 0) {
+        bool ok = probe_.release(err, sizeof(err));
+        events_.publish_response(reply, ok, cmd, ok ? "probe released" : err);
+        return;
+    }
+    if (std::strcmp(cmd, "probe_reset") == 0) {
+        bool pulse = false;
+        bool assert_reset = false;
+        uint32_t pulse_ms = 50;
+        char action[12] = {};
+        if (json_get_string(line, "action", action, sizeof(action))) {
+            if (std::strcmp(action, "pulse") == 0) {
+                pulse = true;
+            } else if (std::strcmp(action, "assert") == 0 || std::strcmp(action, "low") == 0) {
+                assert_reset = true;
+            } else if (std::strcmp(action, "release") == 0 || std::strcmp(action, "high") == 0) {
+                assert_reset = false;
+            } else {
+                events_.publish_response(reply, false, cmd, "invalid probe reset action");
+                return;
+            }
+        }
+        read_boolish(line, "pulse", pulse);
+        read_boolish(line, "assert", assert_reset);
+        json_get_uint32(line, "pulse_ms", pulse_ms);
+        bool ok = probe_.reset_target(assert_reset, pulse, pulse_ms, err, sizeof(err));
+        char extra[1200];
+        probe_.status_json(extra, sizeof(extra));
+        events_.publish_response(reply, ok, cmd, ok ? "probe reset updated" : err, ok ? extra : nullptr);
+        return;
+    }
+
+    char hex[2 * 64 + 1] = {};
+    if (!json_get_string(line, "packet_hex", hex, sizeof(hex))) {
+        json_get_string(line, "hex", hex, sizeof(hex));
+    }
+    uint8_t request[64] = {};
+    uint8_t response[64] = {};
+    size_t request_len = 0;
+    size_t response_len = 0;
+    if (!hex_to_bytes(hex, request, sizeof(request), request_len)) {
+        events_.publish_response(reply, false, cmd, "invalid DAP packet hex");
+        return;
+    }
+    bool ok = probe_.process_dap_packet(request, request_len, response, sizeof(response), response_len, err, sizeof(err));
+    char resp_hex[2 * 64 + 1];
+    bytes_to_hex(response, response_len, resp_hex, sizeof(resp_hex));
+    char extra[240];
+    snprintf(extra,
+             sizeof(extra),
+             "\"request_len\":%u,\"response_len\":%u,\"resp_hex\":\"%s\"",
+             static_cast<unsigned>(request_len),
+             static_cast<unsigned>(response_len),
+             resp_hex);
+    events_.publish_response(reply, ok, cmd, ok ? "DAP packet processed" : err, extra);
 }
 
 void CommandProcessor::handle_channel_config(const char *line, LineSink &reply) {

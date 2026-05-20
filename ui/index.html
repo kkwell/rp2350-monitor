@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embed Labs RP2350 Monitor</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main id="app" class="app-shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Embed Labs Hardware Workbench</p>
+          <h1>RP2350 Monitor</h1>
+        </div>
+        <div class="topbar-right">
+          <label class="language-switch">
+            <span data-i18n="language">Language</span>
+            <select id="languageSelect">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <div class="status-strip" id="statusStrip"></div>
+        </div>
+      </section>
+
+      <section class="layout">
+        <aside class="sidebar">
+          <button class="tab-button active" data-panel="overview" data-i18n="overview">Overview</button>
+          <button class="tab-button" data-panel="logic" data-i18n="logicAnalyzer">Logic Analyzer</button>
+          <button class="tab-button" data-panel="uart">UART</button>
+          <button class="tab-button" data-panel="i2c">I2C</button>
+          <button class="tab-button" data-panel="spi">SPI</button>
+          <button class="tab-button" data-panel="ai" data-i18n="aiSession">AI Session</button>
+        </aside>
+
+        <section class="panel active" id="panel-overview">
+          <div class="overview-dashboard">
+            <div class="grid overview-cards" id="overviewCards"></div>
+            <section class="box overview-primary">
+              <div class="box-head">
+                <h2 data-i18n="systemState">System State</h2>
+                <div class="button-row">
+                  <button data-action="probe" data-i18n="probe">Probe</button>
+                </div>
+              </div>
+              <div class="overview-health" id="overviewHealth"></div>
+            </section>
+            <section class="box overview-transport">
+              <div class="box-head">
+                <h2 data-i18n="transport">Transport</h2>
+              </div>
+              <div class="form-grid">
+                <label><span data-i18n="mode">Mode</span><select id="transportMode"><option>USB CDC</option><option>Wi-Fi TCP</option></select></label>
+                <label><span data-i18n="endpoint">Endpoint</span><input id="transportEndpoint" value="/dev/cu.usbmodemXXXX" /></label>
+              </div>
+              <div class="overview-detail" id="transportDetail"></div>
+            </section>
+            <section class="box overview-wifi">
+              <div class="box-head">
+                <h2 data-i18n="networkSetup">Network Setup</h2>
+                <div class="button-row">
+                  <button data-action="wifi.ap" data-i18n="apMode">AP Mode</button>
+                </div>
+              </div>
+              <div class="network-setup">
+                <div class="network-card" id="wifiApInfo"></div>
+                <div class="network-card">
+                  <h3 data-i18n="savedWifi">Saved Wi-Fi</h3>
+                  <div class="wifi-profile-list" id="wifiProfiles"></div>
+                </div>
+                <div class="network-card network-form">
+                  <div class="form-grid compact">
+                    <label><span data-i18n="profileSlot">Profile Slot</span><select id="wifiSlot">
+                      <option value="0">0</option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                    </select></label>
+                    <label><span data-i18n="ssid">SSID</span><input id="wifiSsid" autocomplete="off" /></label>
+                    <label><span data-i18n="password">Password</span><input id="wifiPassword" type="password" autocomplete="new-password" /></label>
+                  </div>
+                  <div class="button-row network-actions">
+                    <button data-action="wifi.save" data-i18n="saveWifi">Save</button>
+                    <button data-action="wifi.save-connect" data-i18n="saveAndConnect">Save + Connect</button>
+                    <button data-action="wifi.connect" data-i18n="connectSaved">Connect Saved</button>
+                    <button data-action="wifi.clear" data-i18n="clearSlot">Clear Slot</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="box overview-runtime">
+              <div class="box-head">
+                <h2 data-i18n="runtimeResources">Runtime Resources</h2>
+              </div>
+              <div class="overview-detail" id="overviewRuntime"></div>
+            </section>
+            <section class="box overview-channels">
+              <div class="box-head">
+                <h2 data-i18n="activeInterfaces">Active Interfaces</h2>
+              </div>
+              <div class="overview-detail" id="overviewInterfaces"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-logic">
+          <div class="analyzer-workbench">
+            <section class="box analyzer-main">
+              <div class="box-head">
+                <div>
+                  <h2 data-i18n="logicTitle">Logic Analyzer</h2>
+                </div>
+                <div class="button-row">
+                  <button data-action="logic.fit" data-i18n="fit">Fit</button>
+                  <button data-action="logic.run" id="logicRunButton">Run</button>
+                  <button data-action="logic.stop" id="logicStopButton" data-i18n="stop">Stop</button>
+                  <button data-action="logic.configure" data-i18n="configure">Configure</button>
+                  <button data-action="logic.capture" data-i18n="capture">Capture</button>
+                  <button data-action="logic.export" data-i18n="export">Export</button>
+                  <button data-action="session.save" data-i18n="saveSession">Save Session</button>
+                  <button data-action="session.load" data-i18n="loadSession">Load Session</button>
+                  <button data-action="evidence.save" data-i18n="saveEvidence">Save Evidence</button>
+                  <input type="file" id="sessionLoadInput" accept="application/json,.json" hidden />
+                </div>
+              </div>
+
+              <div class="analyzer-toolbar">
+                <label><span data-i18n="sampleRate">Sample Rate</span><input id="logicSampleRate" value="1000000" /></label>
+                <label><span data-i18n="preSamples">Pre Samples</span><input id="logicPreSamples" value="120" /></label>
+                <label><span data-i18n="postSamples">Post Samples</span><input id="logicPostSamples" value="4096" /></label>
+                <label><span data-i18n="logicPull">Input Pull</span><select id="logicPull">
+                  <option value="none" data-i18n="noneShort">None</option>
+                  <option value="up" data-i18n="up">Up</option>
+                  <option value="down" data-i18n="down">Down</option>
+                </select></label>
+                <label><span data-i18n="sampleMode">Sample Mode</span><select id="logicSampleMode">
+                  <option value="single" data-i18n="singleCapture">Single capture</option>
+                  <option value="repeated" data-i18n="repeatedWindows">Repeated windows</option>
+                  <option value="stream" disabled data-i18n="longStream">Long stream (host bridge required)</option>
+                </select></label>
+                <label><span data-i18n="export">Export</span><select id="logicExportFormat">
+                  <option value="vcd">VCD</option>
+                  <option value="csv">CSV</option>
+                  <option value="json">JSON</option>
+                  <option value="settings" data-i18n="settings">Settings</option>
+                </select></label>
+              </div>
+              <div class="logic-hidden-controls" hidden>
+                <select id="logicTriggerType"><option value="none" selected data-i18n="noneShort">None</option></select>
+                <select id="logicTriggerPin"></select>
+                <select id="logicPatternBase"></select>
+                <input id="logicPattern" value="1010" />
+                <input id="logicSearchSamples" value="0" />
+                <input id="logicBurstCount" value="1" />
+              </div>
+
+              <div class="logic-status-grid" id="logicMetrics"></div>
+
+              <div class="analyzer-viewer">
+                <div class="viewer-head">
+                  <div class="button-row">
+                    <button data-action="logic.zoom-in" data-i18n="zoomIn">Zoom In</button>
+                    <button data-action="logic.zoom-out" data-i18n="zoomOut">Zoom Out</button>
+                    <button data-action="logic.cursor-a" data-i18n="cursorA">Cursor A</button>
+                    <button data-action="logic.cursor-b" data-i18n="cursorB">Cursor B</button>
+                    <label class="cursor-color-chip"><span>A</span><input type="color" id="cursorAColor" value="#f6c85f" /></label>
+                    <label class="cursor-color-chip"><span>B</span><input type="color" id="cursorBColor" value="#ff7a7a" /></label>
+                  </div>
+                  <div class="cursor-readout" id="logicMeasurements"></div>
+                </div>
+                <div class="waveform-scroll">
+                  <canvas id="logicCanvas" width="1120" height="520"></canvas>
+                </div>
+                <canvas id="logicOverview" width="1120" height="72"></canvas>
+                <div class="logic-status-bar" id="logicStatusBar"></div>
+              </div>
+            </section>
+
+            <section class="box analyzer-side channel-panel">
+              <div class="box-head">
+                <h2 data-i18n="channels">Channels</h2>
+                <div class="button-row">
+                  <button type="button" id="logicClearChannels" data-i18n="clearChannels">Clear</button>
+                </div>
+              </div>
+              <div class="channel-summary" id="logicChannelSummary"></div>
+              <div class="channel-config-row">
+                <label><span data-i18n="channelPin">Channel Pin</span><select id="logicAddPinSelect"></select></label>
+                <button type="button" id="logicAddChannel" data-i18n="addChannel">Add</button>
+              </div>
+              <div class="channel-matrix" id="logicChannelMatrix"></div>
+            </section>
+
+            <section class="box gpio-panel">
+              <div class="box-head">
+                <h2 data-i18n="gpioLive">GPIO Live</h2>
+                <button data-action="gpio.read" data-i18n="read">Read</button>
+              </div>
+              <div class="form-grid compact">
+                <label><span data-i18n="pins">Pins</span><input id="gpioPins" value="16,17" /></label>
+                <label><span data-i18n="pull">Pull</span><select id="gpioPull"><option value="none" data-i18n="noneShort">None</option><option value="up" data-i18n="up">Up</option><option value="down" data-i18n="down">Down</option></select></label>
+              </div>
+              <div id="gpioLevels" class="level-grid"></div>
+            </section>
+
+            <section class="box analyzer-decoder">
+              <div class="box-head">
+                <h2 data-i18n="decodeExport">Decode / Export</h2>
+                <div class="button-row">
+                  <button data-action="logic.region-from-cursors" data-i18n="useCursors">Use Cursors</button>
+                  <button data-action="logic.decode" data-i18n="decode">Decode</button>
+                  <button data-action="logic.copy-export" data-i18n="copyExport">Copy Export</button>
+                </div>
+              </div>
+              <div class="preset-block">
+                <span data-i18n="protocolPresets">Protocol presets</span>
+                <div class="preset-row">
+                  <button type="button" data-preset="manual" data-i18n="presetManual">Manual</button>
+                  <button type="button" data-preset="uart" data-i18n="presetUART">UART</button>
+                  <button type="button" data-preset="i2c" data-i18n="presetI2C">I2C</button>
+                  <button type="button" data-preset="spi" data-i18n="presetSPI">SPI</button>
+                </div>
+              </div>
+              <div class="form-grid compact decoder-form" id="decoderForm">
+                <label><span data-i18n="decoder">Decoder</span><select id="decoderType">
+                  <option value="summary" data-i18n="summary">Summary</option>
+                  <option value="bursts" data-i18n="bursts">Bursts</option>
+                  <option value="edges" data-i18n="edges">Edges</option>
+                  <option value="uart">UART</option>
+                  <option value="spi">SPI</option>
+                  <option value="i2c">I2C</option>
+                  <option value="sigrok" data-i18n="sigrokBridge">Sigrok bridge</option>
+                </select></label>
+                <label data-decoder-field="data"><span id="decoderDataLabel">RX / SDA / MOSI</span><select id="decoderDataPin"></select></label>
+                <label data-decoder-field="clock"><span id="decoderClockLabel">SCK / SCL</span><select id="decoderClockPin"></select></label>
+                <label data-decoder-field="cs">CS<select id="decoderCsPin"></select></label>
+                <label data-decoder-field="baud">Baud<select id="decoderBaud">
+                  <option value="auto" data-i18n="autoBaud">Auto</option>
+                  <option value="9600">9600</option>
+                  <option value="19200">19200</option>
+                  <option value="38400">38400</option>
+                  <option value="57600">57600</option>
+                  <option value="115200" selected>115200</option>
+                  <option value="230400">230400</option>
+                  <option value="460800">460800</option>
+                  <option value="921600">921600</option>
+                </select></label>
+                <label data-decoder-field="spi-mode">SPI Mode<select id="decoderSpiMode"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+                <label><span data-i18n="regionStart">Start</span><input id="logicRegionStart" placeholder="0" /></label>
+                <label><span data-i18n="regionEnd">End</span><input id="logicRegionEnd" placeholder="end" data-i18n-placeholder="regionEndPlaceholder" /></label>
+              </div>
+              <pre id="decoderOutput" class="event-log"></pre>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-uart">
+          <div class="protocol-workbench">
+            <div class="protocol-device-board">
+              <div class="protocol-device-head">
+                <span data-i18n="deviceChannel">Interface</span>
+                <button type="button" data-action-local="uart.addDevice" data-i18n="addDevice">Add</button>
+              </div>
+              <div class="protocol-device-table" id="uartDeviceTable"></div>
+              <select id="uartDeviceSelect" hidden></select>
+              <div class="protocol-device-status" id="uartDeviceStatus" hidden></div>
+            </div>
+            <section class="box protocol-config">
+              <div class="box-head">
+                <h2 data-i18n="uartAssistant">UART Assistant</h2>
+                <div class="button-row">
+                  <button data-action="uart.configure" data-i18n="openPort">Open</button>
+                  <button data-action="uart.write" data-i18n="send">Send</button>
+                </div>
+              </div>
+              <div class="form-grid compact">
+                <label><span data-i18n="txPin">TX Pin</span><select id="uartTx"></select></label>
+                <label><span data-i18n="rxPin">RX Pin</span><select id="uartRx"></select></label>
+                <div class="pin-map protocol-pin-map span4">
+                  <span data-i18n="nativeMapping">Native Mapping</span>
+                  <strong id="uartPinSummary">UART1 TX GP8 / RX GP9</strong>
+                </div>
+                <label><span data-i18n="baud">Baud</span><select id="uartBaudPreset">
+                  <option value="9600">9600</option>
+                  <option value="19200">19200</option>
+                  <option value="38400">38400</option>
+                  <option value="57600">57600</option>
+                  <option value="115200" selected>115200</option>
+                  <option value="230400">230400</option>
+                  <option value="460800">460800</option>
+                  <option value="921600">921600</option>
+                  <option value="custom" data-i18n="custom">Custom</option>
+                </select></label>
+                <label id="uartCustomBaudWrap" class="is-hidden"><span data-i18n="customBaud">Custom Baud</span><input id="uartBaud" value="115200" inputmode="numeric" /></label>
+                <label><span data-i18n="frame">Frame</span><select id="uartFrame"><option>8N1</option></select></label>
+                <label><span data-i18n="sendMode">Send Mode</span><select id="uartSendMode"><option value="text" data-i18n="textMode">Text</option><option value="hex">HEX</option><option value="binary" data-i18n="binaryMode">Binary</option></select></label>
+                <label><span data-i18n="lineEnding">Line Ending</span><select id="uartLineEnding"><option value="none" data-i18n="noneShort">None</option><option value="lf">LF</option><option value="cr">CR</option><option value="crlf">CRLF</option></select></label>
+                <label><span data-i18n="displayMode">Display</span><select id="uartDisplayMode"><option value="terminal" data-i18n="terminalMode">Terminal</option><option value="hex">HEX</option><option value="binary" data-i18n="binaryMode">Binary</option><option value="json">JSON</option></select></label>
+              </div>
+              <label class="terminal-input"><span data-i18n="sendPayload">Send Payload</span><textarea id="uartPayload" spellcheck="false">Hello</textarea></label>
+              <input id="uartHex" value="48656c6c6f" hidden />
+              <div class="protocol-options">
+                <label class="inline-check"><input type="checkbox" id="uartEcho" checked /> <span data-i18n="localEcho">Local echo sent data</span></label>
+                <button type="button" data-action-local="uart.clear" data-i18n="clearLog">Clear Log</button>
+              </div>
+            </section>
+            <section class="box protocol-terminal">
+              <div class="box-head">
+                <h2 data-i18n="terminal">Terminal</h2>
+                <div class="protocol-stats" id="uartStats"></div>
+              </div>
+              <pre id="uartLog" class="event-log protocol-log"></pre>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-i2c">
+          <div class="protocol-workbench">
+            <div class="protocol-device-board">
+              <div class="protocol-device-head">
+                <span data-i18n="deviceChannel">Interface</span>
+                <button type="button" data-action-local="i2c.addDevice" data-i18n="addDevice">Add</button>
+              </div>
+              <div class="protocol-device-table" id="i2cDeviceTable"></div>
+              <select id="i2cDeviceSelect" hidden></select>
+              <div class="protocol-device-status" id="i2cDeviceStatus" hidden></div>
+            </div>
+            <section class="box protocol-config">
+              <div class="box-head">
+                <h2 data-i18n="i2cAssistant">I2C Assistant</h2>
+                <div class="button-row">
+                  <button data-action="i2c.configure" data-i18n="openBus">Open Bus</button>
+                  <button data-action="i2c.transfer" data-i18n="transfer">Transfer</button>
+                </div>
+              </div>
+              <div class="form-grid compact">
+                <label><span data-i18n="sdaPin">SDA Pin</span><select id="i2cSda"></select></label>
+                <label><span data-i18n="sclPin">SCL Pin</span><select id="i2cScl"></select></label>
+                <div class="pin-map protocol-pin-map span4">
+                  <span data-i18n="nativeMapping">Native Mapping</span>
+                  <strong id="i2cPinSummary">I2C0 SDA GP4 / SCL GP5</strong>
+                </div>
+                <label><span data-i18n="baud">Baud</span><input id="i2cBaud" value="100000" /></label>
+                <label><span data-i18n="address">Address</span><input id="i2cAddress" value="0x50" /></label>
+                <label><span data-i18n="transferType">Transfer Type</span><select id="i2cTransferType"><option value="write-read" data-i18n="writeRead">Write + Read</option><option value="write" data-i18n="writeOnly">Write only</option><option value="read" data-i18n="readOnly">Read only</option></select></label>
+                <label><span data-i18n="readLen">Read Len</span><input id="i2cReadLen" value="16" /></label>
+                <label><span data-i18n="payloadMode">Payload Mode</span><select id="i2cPayloadMode"><option value="hex">HEX</option><option value="text" data-i18n="textMode">Text</option><option value="binary" data-i18n="binaryMode">Binary</option></select></label>
+              </div>
+              <label class="terminal-input"><span data-i18n="writePayload">Write Payload</span><textarea id="i2cPayload" spellcheck="false">00</textarea></label>
+              <input id="i2cWriteHex" value="00" hidden />
+              <div class="protocol-options">
+                <label><span data-i18n="displayMode">Display</span><select id="i2cDisplayMode"><option value="decoded" data-i18n="decodedMode">Decoded</option><option value="hex">HEX</option><option value="json">JSON</option></select></label>
+                <button type="button" data-action-local="i2c.clear" data-i18n="clearLog">Clear Log</button>
+              </div>
+            </section>
+            <section class="box protocol-terminal">
+              <div class="box-head">
+                <h2 data-i18n="i2cTransactions">Transactions</h2>
+                <div class="protocol-stats" id="i2cStats"></div>
+              </div>
+              <pre id="i2cLog" class="event-log protocol-log"></pre>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-spi">
+          <div class="protocol-workbench">
+            <div class="protocol-device-board">
+              <div class="protocol-device-head">
+                <span data-i18n="deviceChannel">Interface</span>
+                <button type="button" data-action-local="spi.addDevice" data-i18n="addDevice">Add</button>
+              </div>
+              <div class="protocol-device-table" id="spiDeviceTable"></div>
+              <select id="spiDeviceSelect" hidden></select>
+              <div class="protocol-device-status" id="spiDeviceStatus" hidden></div>
+            </div>
+            <section class="box protocol-config">
+              <div class="box-head">
+                <h2 data-i18n="spiAssistant">SPI Assistant</h2>
+                <div class="button-row">
+                  <button data-action="spi.configure" data-i18n="openBus">Open Bus</button>
+                  <button data-action="spi.transfer" data-i18n="transfer">Transfer</button>
+                </div>
+              </div>
+              <div class="form-grid compact">
+                <label><span data-i18n="sckPin">SCK Pin</span><select id="spiSck"></select></label>
+                <label><span data-i18n="mosiPin">MOSI Pin</span><select id="spiMosi"></select></label>
+                <label><span data-i18n="misoPin">MISO Pin</span><select id="spiMiso"></select></label>
+                <label><span data-i18n="csPin">CS Pin</span><select id="spiCs"></select></label>
+                <div class="pin-map protocol-pin-map span4">
+                  <span data-i18n="nativeMapping">Native Mapping</span>
+                  <strong id="spiPinSummary">SPI1 SCK GP10 / MOSI GP11 / MISO GP12 / CS GP13</strong>
+                </div>
+                <label><span data-i18n="baud">Baud</span><input id="spiBaud" value="1000000" /></label>
+                <label>Mode<select id="spiMode" title="Current firmware transfer path uses SPI mode 0"><option value="0">Mode 0</option></select></label>
+                <label><span data-i18n="readLen">Read Len</span><input id="spiReadLen" value="4" /></label>
+                <label><span data-i18n="payloadMode">Payload Mode</span><select id="spiPayloadMode"><option value="hex">HEX</option><option value="text" data-i18n="textMode">Text</option><option value="binary" data-i18n="binaryMode">Binary</option></select></label>
+                <label><span data-i18n="displayMode">Display</span><select id="spiDisplayMode"><option value="decoded" data-i18n="decodedMode">Decoded</option><option value="hex">HEX</option><option value="json">JSON</option></select></label>
+              </div>
+              <label class="terminal-input"><span data-i18n="transferPayload">Transfer Payload</span><textarea id="spiPayload" spellcheck="false">9f000000</textarea></label>
+              <input id="spiHex" value="9f000000" hidden />
+              <div class="protocol-options">
+                <button type="button" data-action-local="spi.clear" data-i18n="clearLog">Clear Log</button>
+              </div>
+            </section>
+            <section class="box protocol-terminal">
+              <div class="box-head">
+                <h2 data-i18n="spiTransactions">Transactions</h2>
+                <div class="protocol-stats" id="spiStats"></div>
+              </div>
+              <pre id="spiLog" class="event-log protocol-log"></pre>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-ai">
+          <div class="ai-log-layout">
+            <section class="box">
+              <div class="box-head">
+                <h2 data-i18n="aiQueue">AI Operation Queue</h2>
+                <button data-action="ai.demo" data-i18n="generateExample">Generate Example</button>
+              </div>
+              <div id="aiQueue" class="ai-queue-list"></div>
+            </section>
+            <section class="box">
+              <div class="box-head">
+                <h2 data-i18n="operationDetail">Operation Detail</h2>
+              </div>
+              <div id="aiDetail" class="ai-detail"></div>
+            </section>
+          </div>
+        </section>
+      </section>
+      <div class="modal-overlay hidden" id="errorModal" role="alertdialog" aria-modal="true" aria-labelledby="errorModalTitle">
+        <div class="modal-card">
+          <h2 id="errorModalTitle" data-i18n="errorTitle">Operation failed</h2>
+          <p id="errorModalMessage"></p>
+          <div class="button-row modal-actions">
+            <button type="button" id="errorModalClose" data-i18n="ok">OK</button>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="./src/app.js"></script>
+  </body>
+</html>

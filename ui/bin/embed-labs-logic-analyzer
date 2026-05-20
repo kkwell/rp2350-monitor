@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOST="127.0.0.1"
+PORT="5178"
+SERIAL=""
+TCP=""
+OPEN_BROWSER="1"
+PANEL="logic"
+LANGUAGE=""
+
+usage() {
+  cat <<'EOF'
+Embed Labs RP2350 Logic Analyzer
+
+Usage:
+  embed-labs-logic-analyzer [--serial /dev/cu.usbmodemXXXX]
+  embed-labs-logic-analyzer --tcp 192.168.4.1:4242
+
+Options:
+  --host HOST       Local bridge host, default 127.0.0.1
+  --port PORT       Local bridge port, default 5178
+  --serial DEVICE   USB CDC serial device
+  --tcp HOST:PORT   RP2350-Monitor Wi-Fi TCP endpoint
+  --panel PANEL     Initial panel, default logic
+  --lang zh|en      UI language
+  --no-open         Start bridge only; do not open a browser
+  -h, --help        Show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host) HOST="${2:?missing --host value}"; shift 2 ;;
+    --port) PORT="${2:?missing --port value}"; shift 2 ;;
+    --serial) SERIAL="${2:?missing --serial value}"; shift 2 ;;
+    --tcp) TCP="${2:?missing --tcp value}"; shift 2 ;;
+    --panel) PANEL="${2:?missing --panel value}"; shift 2 ;;
+    --lang) LANGUAGE="${2:?missing --lang value}"; shift 2 ;;
+    --no-open) OPEN_BROWSER="0"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [[ -n "$SERIAL" && -n "$TCP" ]]; then
+  echo "choose either --serial or --tcp, not both" >&2
+  exit 2
+fi
+
+if [[ -z "$SERIAL" && -z "$TCP" ]]; then
+  SERIAL="$(ls /dev/cu.usbmodem* /dev/tty.usbmodem* 2>/dev/null | head -n 1 || true)"
+fi
+
+if [[ -z "$SERIAL" && -z "$TCP" ]]; then
+  cat >&2 <<'EOF'
+No RP2350 monitor transport was found.
+
+Connect the board over USB, or connect this computer to the board Wi-Fi/AP and
+run with --tcp 192.168.4.1:4242.
+EOF
+  exit 1
+fi
+
+URL="http://${HOST}:${PORT}/?api=http://${HOST}:${PORT}/api/operation&panel=${PANEL}"
+if [[ -n "$LANGUAGE" ]]; then
+  URL="${URL}&lang=${LANGUAGE}"
+fi
+if [[ "$OPEN_BROWSER" == "1" ]]; then
+  case "$(uname -s)" in
+    Darwin) open "$URL" >/dev/null 2>&1 || true ;;
+    Linux) command -v xdg-open >/dev/null 2>&1 && xdg-open "$URL" >/dev/null 2>&1 || true ;;
+  esac
+fi
+
+ARGS=(--host "$HOST" --port "$PORT")
+if [[ -n "$TCP" ]]; then
+  ARGS+=(--tcp "$TCP")
+else
+  ARGS+=(--serial "$SERIAL")
+fi
+
+echo "Embed Labs RP2350 Logic Analyzer: $URL"
+python3 "$ROOT_DIR/bridge/rpmon_bridge.py" "${ARGS[@]}"

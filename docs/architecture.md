@@ -23,6 +23,7 @@ main
 │   ├── channel_manager      channel lifecycle
 │   ├── logic_analyzer       PIO2/DMA high-speed GPIO capture
 │   ├── pin_manager          pin ownership and mux validation
+│   ├── debug_probe          CMSIS-DAP/SWD probe control and PIO backend
 │   ├── config_store         persisted Wi-Fi profiles
 │   └── event_bus            bounded event buffering and fan-out
 └── drivers
@@ -40,7 +41,8 @@ tools/rpmon_cli.py
 ├── device control          USB/TCP JSON commands
 ├── logic_capture           configure, start, wait, read, and persist JSONL
 ├── logic_decode            summary, bursts, edges, UART, SPI, and I2C analysis
-└── logic_export            CSV and VCD conversion
+├── logic_export            CSV and VCD conversion
+└── probe_*                 AI-readable CMSIS-DAP/SWD control helpers
 ```
 
 ## Data Model
@@ -126,6 +128,31 @@ computer handles decoding, export, and repeated analysis. The current CLI keeps
 that analysis machine-readable instead of GUI-centric, which makes it suitable
 for AI-assisted debugging pipelines.
 
+## CMSIS-DAP Debug Probe Path
+
+The debug probe path is separate from protocol channels and the logic analyzer.
+It reuses the Raspberry Pi official `debugprobe` CMSIS-DAP sources under
+`third_party/debugprobe`, but the low-level pin ownership and runtime pin
+selection are integrated with RP2350 Monitor.
+
+Flow:
+
+1. The composite USB descriptor exposes CDC JSONL, the Raspberry Pi reset
+   interface for `picotool`, and a CMSIS-DAP v2 bulk interface.
+2. `probe_config` validates and claims SWCLK/SWDIO/nRESET through `PinManager`.
+   If OpenOCD connects without an explicit config, the default GP2/GP3/GP1
+   pinout is claimed lazily when CMSIS-DAP opens the SWD port.
+3. CMSIS-DAP packets from the USB bulk endpoint, or from JSONL `probe_dap`, are
+   processed by the Arm CMSIS-DAP command layer from Raspberry Pi debugprobe.
+4. SWD bit transfers use the same PIO command model as Raspberry Pi debugprobe,
+   with runtime-configured GPIOs and one claimed PIO0/PIO1 state machine.
+5. `probe_release` deinitializes PIO, releases probe pins, and returns them to
+   UART/SPI/I2C/GPIO/logic use.
+
+OpenOCD and GDB stay host-side. The firmware is the SWD transport and reset
+controller; target flash algorithms and target debug sequences remain in
+OpenOCD target configuration files.
+
 ## Protocol Channel Contract
 
 Every protocol driver implements:
@@ -156,6 +183,7 @@ Native first-version behavior:
 - Which Pico 2 W GPIOs are externally exposed.
 - Which pins can be used for UART/SPI/I2C alternate functions.
 - Which channel currently owns each pin.
+- Which pins are temporarily owned by the CMSIS-DAP debug probe.
 
 Protocol drivers should not duplicate pin tables. New protocol layers should add validation helpers here, then claim pins through the same API.
 

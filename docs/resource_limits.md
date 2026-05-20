@@ -14,6 +14,8 @@ Pico 2 W / RP2350 exposes these native protocol blocks to the firmware:
 - GPIO: exposed header pins `0..22` and `26..28`.
 - High-speed logic analyzer: one active PIO2/DMA capture engine, using one PIO
   state machine, one DMA channel, and a dedicated 32,768-word SRAM buffer.
+- CMSIS-DAP/SWD debug probe: one active SWD engine, using SWCLK/SWDIO plus
+  optional nRESET GPIO and one PIO state machine from PIO0 or PIO1.
 - CAN: reserved in the protocol model, not implemented in this firmware version.
 
 The channel table has `kMaxChannels = 8` slots. A valid concurrent setup can mix
@@ -61,6 +63,12 @@ capture instrument, not a byte-stream protocol channel. It still uses the same
 pin ownership rules, so a GPIO cannot be used by UART/SPI/I2C/GPIO and logic
 capture at the same time.
 
+The debug probe is also outside the eight-channel table. It uses `PinManager`
+owner `900` while active and cannot share SWCLK, SWDIO, or nRESET pins with any
+protocol channel or logic capture. The default debug-probe pinout is GP2
+SWCLK, GP3 SWDIO, and GP1 nRESET, matching Raspberry Pi debugprobe-on-Pico.
+Hosts may move these signals with `probe_config` before starting OpenOCD.
+
 ## Rejection Cases
 
 The control API returns a failed response when a request exceeds hardware or
@@ -99,6 +107,9 @@ firmware limits:
 - If the PIO2 state machine, PIO instruction memory, or required DMA channels
   cannot be claimed, `logic_start` returns `ok:false` with the specific resource
   name. Pre-trigger ring capture uses two DMA channels.
+- `probe_config` rejects overlapping, non-exposed, or already-owned SWD pins.
+- If no PIO0/PIO1 state machine or PIO instruction memory is available for SWD,
+  `probe_config` or CMSIS-DAP connect records the failure in `probe.last_error`.
 
 Use the `pins` command to inspect current pin ownership and `channels` to inspect
 configured protocol instances. Use `release --id N` to remove a channel and free
@@ -122,7 +133,7 @@ High-speed logic analyzer captures use a separate fixed buffer:
 - `kLogicCaptureWords = 32768`.
 - Buffer size is 131,072 bytes.
 - Triggered pre-trigger captures use a 16,384-word circular DMA ring inside
-  that SRAM area. Firmware `0.8.9` implements the ring as two chained DMA halves
+  that SRAM area. Firmware `0.8.9` and later implement the ring as two chained DMA halves
   (`logic_caps.ring_dma_mode:"pingpong"`) instead of a single long address-ring
   DMA transfer. `logic_caps.ring_buffer_words` and
   `logic_caps.ring_buffer_bytes` report this active ring capacity.
@@ -154,6 +165,11 @@ capture JSONL on the computer and emits decoded JSONL for burst markers,
 UART/SPI/I2C, edge lists, and timing summaries. Very large CSV/VCD exports are
 bounded by host disk space rather than Pico memory.
 
+CMSIS-DAP traffic does not enter the telemetry event queues. `probe_status`
+reports counters for DAP packets, DAP errors, SWD port setups, and port setup
+failures. OpenOCD/GDB traffic uses the USB CMSIS-DAP bulk endpoint; AI tools can
+also send raw CMSIS-DAP packets through `probe_dap` over USB CDC or Wi-Fi TCP.
+
 The firmware still cannot overcome physical bandwidth limits. Hosts should keep
 USB or TCP reads active and write JSONL to disk when capturing sustained traffic.
 Any non-zero `dropped_events` or per-channel `dropped_events` means the capture
@@ -178,3 +194,6 @@ has a gap and the host should mark the analysis as incomplete.
   detection. Firmware waits open-ended for level, edge, or full-width pattern
   triggers, then freezes the requested pre/post window and uploads it through
   the existing `logic_read` chunks.
+- Debug probe supports SWD through CMSIS-DAP v2. JTAG and SWO are reported as
+  unsupported. Target-specific flashing and debugging are performed by host
+  OpenOCD/GDB using the USB CMSIS-DAP interface.

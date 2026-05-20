@@ -8,6 +8,7 @@
 #include "rpmon/core/event_bus.h"
 #include "rpmon/core/logic_analyzer.h"
 #include "rpmon/net/wifi_manager.h"
+#include "rpmon/probe/debug_probe.h"
 
 struct tcp_pcb;
 struct pbuf;
@@ -16,7 +17,7 @@ namespace rpmon {
 
 class HttpServer {
 public:
-    HttpServer(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, EventBus &events, uint16_t port);
+    HttpServer(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, DebugProbe &probe, EventBus &events, uint16_t port);
     bool start();
     void poll();
 
@@ -55,6 +56,7 @@ private:
     WifiManager &wifi_;
     ChannelManager &channels_;
     LogicAnalyzer &logic_;
+    DebugProbe &probe_;
     EventBus &events_;
     uint16_t port_;
     tcp_pcb *listen_pcb_ = nullptr;

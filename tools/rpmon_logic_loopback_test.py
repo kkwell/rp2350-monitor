@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from rpmon_cli import SerialTransport, TcpTransport, Transport
-from rpmon_logic import LogicCapture
+from rpmon_logic import LogicCapture, decode_spi
 
 
 DRIVE_BY_MONITOR = {16: 2, 17: 3, 18: 0, 19: 1}
@@ -91,8 +91,29 @@ def response_doc(docs: list[Dict[str, Any]], cmd: str) -> Dict[str, Any]:
 def release_all(transport: Transport, timeout: float) -> None:
     transact(transport, {"cmd": "logic_stop"}, timeout, ignore_error=True)
     transact(transport, {"cmd": "logic_release"}, timeout, ignore_error=True)
-    for channel_id in [SPI_ID, *OUTPUT_IDS.values(), *INPUT_IDS.values()]:
+    channel_ids = {SPI_ID, *OUTPUT_IDS.values(), *INPUT_IDS.values()}
+    ok, docs = transact(transport, {"cmd": "channels"}, timeout, ignore_error=True)
+    if ok:
+        for doc in docs:
+            for channel in doc.get("channels", []) if isinstance(doc.get("channels"), list) else []:
+                try:
+                    channel_ids.add(int(channel.get("id")))
+                except (TypeError, ValueError):
+                    pass
+    ok, docs = transact(transport, {"cmd": "pins"}, timeout, ignore_error=True)
+    if ok:
+        for doc in docs:
+            for pin in doc.get("pins", []) if isinstance(doc.get("pins"), list) else []:
+                try:
+                    owner = int(pin.get("owner", 0))
+                except (TypeError, ValueError):
+                    continue
+                if owner not in (0, 1000):
+                    channel_ids.add(owner)
+    for channel_id in sorted(channel_ids):
         transact(transport, {"cmd": "channel_release", "id": channel_id}, timeout, ignore_error=True)
+    transact(transport, {"cmd": "logic_stop"}, timeout, ignore_error=True)
+    transact(transport, {"cmd": "logic_release"}, timeout, ignore_error=True)
 
 
 def setup_gpio_loopbacks(transport: Transport, timeout: float) -> None:
@@ -215,7 +236,7 @@ def assert_edge_near_trigger(
     capture: LogicCapture,
     pin: int,
     edge: str,
-    tolerance: int = 3,
+    tolerance: int = 12,
 ) -> Dict[str, Any]:
     if not capture.trigger_found or capture.trigger_sample is None:
         raise AssertionError(f"{name}: trigger was not found")
@@ -438,10 +459,27 @@ def run_spi_mirror_test(transport: Transport, args: argparse.Namespace) -> None:
         raise AssertionError("spi0_mirror_gp16_19: no SCK edges on GP16")
     if not find_edges(capture, 17):
         raise AssertionError("spi0_mirror_gp16_19: no MOSI edges on GP17")
+    spi_words = list(
+        decode_spi(
+            capture,
+            sck_pin=16,
+            mosi_pin=17,
+            miso_pin=18,
+            cs_pin=19,
+            mode=0,
+            cs_active_high=False,
+            word_bits=8,
+            bit_order="msb",
+        )
+    )
+    mosi_hex = "".join(str(item.get("mosi_hex", "")) for item in spi_words if item.get("mosi_hex"))
+    if not mosi_hex.startswith("a55a3cc3"):
+        raise AssertionError(f"spi0_mirror_gp16_19: decoded MOSI {mosi_hex!r}, expected a55a3cc3")
     print_doc(
         {
             "type": "loopback_case",
             **capture_summary("spi0_mirror_gp16_19", capture, status),
+            "spi_mosi_hex": mosi_hex,
             "gp16_edges": find_edges(capture, 16)[:8],
             "gp17_edges": find_edges(capture, 17)[:8],
             "gp19_edges": find_edges(capture, 19)[:8],

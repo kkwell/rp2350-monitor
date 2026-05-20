@@ -81,8 +81,8 @@ void append_html(char *out, size_t out_len, size_t &pos, const char *fmt, ...) {
 
 } // namespace
 
-HttpServer::HttpServer(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, EventBus &events, uint16_t port)
-    : wifi_(wifi), channels_(channels), logic_(logic), events_(events), port_(port) {}
+HttpServer::HttpServer(WifiManager &wifi, ChannelManager &channels, LogicAnalyzer &logic, DebugProbe &probe, EventBus &events, uint16_t port)
+    : wifi_(wifi), channels_(channels), logic_(logic), probe_(probe), events_(events), port_(port) {}
 
 bool HttpServer::start() {
     cyw43_arch_lwip_begin();
@@ -368,9 +368,15 @@ void HttpServer::handle_form_action(Client &client, const char *path, const char
     send_response(client, 404, "Not Found", "text/plain", "not found\n");
 }
 
+namespace {
+constexpr size_t kStatusJsonBufferSize = 9000;
+constexpr size_t kEscapedStatusBufferSize = 14000;
+constexpr size_t kLogicJsonBufferSize = 1800;
+} // namespace
+
 void HttpServer::send_page(Client &client, const char *message) {
-    static char status[6200];
-    static char escaped_status[9200];
+    static char status[kStatusJsonBufferSize];
+    static char escaped_status[kEscapedStatusBufferSize];
     static char profile_rows[1200];
     static char profile_options[520];
     static char scan_options[1400];
@@ -430,7 +436,7 @@ void HttpServer::send_page(Client &client, const char *message) {
 }
 
 void HttpServer::send_status_json(Client &client) {
-    static char body[6200];
+    static char body[kStatusJsonBufferSize];
     build_status_json(body, sizeof(body));
     send_response(client, 200, "OK", "application/json", body);
 }
@@ -465,19 +471,22 @@ void HttpServer::send_response(Client &client, int code, const char *reason, con
 void HttpServer::build_status_json(char *out, size_t out_len) const {
     static char wifi[1800];
     static char channels[1600];
-    char logic[520];
+    char logic[kLogicJsonBufferSize];
+    char probe[1200];
     char buffers[1800];
     wifi_.status_json(wifi, sizeof(wifi));
     channels_.list_json(channels, sizeof(channels));
     logic_.status_json(logic, sizeof(logic));
+    probe_.status_json(probe, sizeof(probe));
     events_.stats_json(buffers, sizeof(buffers));
     std::snprintf(out, out_len,
-                  "{\"type\":\"status\",\"version\":\"%s\",\"http_port\":%u,%s,%s,%s,%s}",
+                  "{\"type\":\"status\",\"version\":\"%s\",\"http_port\":%u,%s,%s,%s,%s,%s}",
                   kFirmwareVersion,
                   static_cast<unsigned>(port_),
                   wifi,
                   channels,
                   logic,
+                  probe,
                   buffers);
 }
 

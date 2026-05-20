@@ -38,26 +38,37 @@ add_executable(rp2350_monitor
     firmware/src/net/dhcp_server.cpp
     firmware/src/net/dns_server.cpp
     firmware/src/net/wifi_manager.cpp
+    firmware/src/probe/debug_probe.cpp
     firmware/src/transport/http_server.cpp
     firmware/src/transport/tcp_transport.cpp
+    firmware/src/transport/usb_descriptors.c
     firmware/src/transport/usb_transport.cpp
     firmware/src/util/hex.cpp
     firmware/src/util/json.cpp
+    third_party/debugprobe/CMSIS_DAP/CMSIS/DAP/Firmware/Source/DAP.c
+    third_party/debugprobe/CMSIS_DAP/CMSIS/DAP/Firmware/Source/DAP_vendor.c
+    third_party/debugprobe/CMSIS_DAP/CMSIS/DAP/Firmware/Source/JTAG_DP.c
+    third_party/debugprobe/CMSIS_DAP/CMSIS/DAP/Firmware/Source/SWO.c
+    third_party/debugprobe/src/sw_dp_pio.c
 )
 
 target_include_directories(rp2350_monitor PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/firmware/include
+    ${CMAKE_CURRENT_LIST_DIR}/third_party/debugprobe/src
+    ${CMAKE_CURRENT_LIST_DIR}/third_party/debugprobe/CMSIS_DAP/CMSIS/DAP/Firmware/Include
+    ${CMAKE_CURRENT_LIST_DIR}/third_party/debugprobe/CMSIS_DAP/CMSIS/Core/Include
     ${PICO_SDK_PATH}/src/rp2_common/pico_cyw43_arch/include
     ${PICO_SDK_PATH}/src/rp2_common/pico_cyw43_driver/include
 )
 
 target_compile_definitions(rp2350_monitor PRIVATE
-    RPMON_FW_VERSION="0.8.9"
+    RPMON_FW_VERSION="0.9.0"
     PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=1
     PICO_STDIO_USB_RESET_INTERFACE_SUPPORT_RESET_TO_BOOTSEL=1
     PICO_STDIO_USB_RESET_INTERFACE_SUPPORT_RESET_TO_FLASH_BOOT=1
     PICO_STDIO_USB_RESET_BOOTSEL_INTERFACE_DISABLE_MASK=1
     PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=1
+    PICO_STDIO_USB_USE_DEFAULT_DESCRIPTORS=0
 )
 
 pico_configure_ip4_address(rp2350_monitor PRIVATE CYW43_DEFAULT_IP_AP_ADDRESS "192.168.4.1")
@@ -69,6 +80,7 @@ target_link_libraries(rp2350_monitor
     pico_stdlib
     pico_bootrom
     pico_cyw43_arch_lwip_threadsafe_background
+    pico_unique_id
     hardware_flash
     hardware_clocks
     hardware_dma
@@ -78,6 +90,8 @@ target_link_libraries(rp2350_monitor
     hardware_sync
     hardware_uart
 )
+
+pico_generate_pio_header(rp2350_monitor ${CMAKE_CURRENT_LIST_DIR}/firmware/src/probe/swd_probe.pio)
 
 pico_enable_stdio_usb(rp2350_monitor 1)
 pico_enable_stdio_uart(rp2350_monitor 0)

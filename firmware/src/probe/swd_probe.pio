@@ -1,0 +1,38 @@
+; Based on Raspberry Pi debugprobe/src/probe.pio.
+; Copyright (c) 2021-2023 Raspberry Pi (Trading) Ltd.
+; SPDX-License-Identifier: MIT
+
+; Every TX FIFO entry is either a command, or up to 32 bits of data.
+; Command format:
+;
+; | 13:9 |  8  |  7:0  |
+; | Cmd  | Dir | Count |
+;
+; Count is the number of bits to be transferred by this command, minus 1.
+; Dir is the output enable for the SWDIO pin.
+; Cmd is the address of write_cmd, read_cmd, turnaround_cmd, or get_next_cmd.
+
+.program rpmon_swd_probe
+.side_set 1 opt
+
+public write_cmd:
+public turnaround_cmd:
+    pull
+write_bitloop:
+    out pins, 1             [1]  side 0x0
+    jmp x-- write_bitloop   [1]  side 0x1
+
+.wrap_target
+public get_next_cmd:
+    pull                         side 0x0
+    out x, 8
+    out pindirs, 1
+    out pc, 5
+
+read_bitloop:
+    nop
+public read_cmd:
+    in pins, 1              [1]  side 0x1
+    jmp x-- read_bitloop         side 0x0
+    push
+.wrap

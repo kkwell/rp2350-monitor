@@ -19,6 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: Install build dependencies
         run: |
@@ -33,6 +34,11 @@ jobs:
             ninja-build \
             pkg-config \
             python3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Resolve firmware version
         id: version
@@ -53,6 +59,12 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Validate host UI
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          cd ui
+          npm run validate
 
       - name: Checkout Pico SDK
         if: steps.existing.outputs.exists == 'false'
@@ -83,6 +95,9 @@ jobs:
           cp build/rp2350_monitor.elf "dist/rp2350_monitor-${{ steps.version.outputs.version }}.elf"
           cp build/rp2350_monitor.elf.map "dist/rp2350_monitor-${{ steps.version.outputs.version }}.map"
           cp build/size.txt "dist/rp2350_monitor-${{ steps.version.outputs.version }}-size.txt"
+          tar -czf "dist/rp2350-monitor-ui-${{ steps.version.outputs.version }}.tar.gz" \
+            -C ui \
+            README.md package.json index.html bin bridge docs src
           sha256sum dist/* > "dist/rp2350_monitor-${{ steps.version.outputs.version }}-sha256.txt"
 
       - name: Create GitHub release

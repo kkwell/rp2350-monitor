@@ -5,6 +5,7 @@
 #include "rpmon/core/logic_analyzer.h"
 #include "rpmon/core/pin_manager.h"
 #include "rpmon/net/wifi_manager.h"
+#include "rpmon/probe/debug_probe.h"
 #include "rpmon/transport/http_server.h"
 #include "rpmon/transport/tcp_transport.h"
 #include "rpmon/transport/usb_transport.h"
@@ -21,10 +22,11 @@ int main() {
     static rpmon::WifiManager wifi(events);
     static rpmon::ChannelManager channels(pins, events);
     static rpmon::LogicAnalyzer logic(pins);
-    static rpmon::CommandProcessor processor(wifi, channels, logic, pins, events);
+    static rpmon::DebugProbe probe(pins);
+    static rpmon::CommandProcessor processor(wifi, channels, logic, probe, pins, events);
     static rpmon::UsbTransport usb(processor);
     static rpmon::TcpTransport tcp(processor, rpmon::kTcpControlPort);
-    static rpmon::HttpServer http(wifi, channels, logic, events, rpmon::kHttpPort);
+    static rpmon::HttpServer http(wifi, channels, logic, probe, events, rpmon::kHttpPort);
 
     events.add_sink(&usb);
 
@@ -58,6 +60,7 @@ int main() {
         wifi.poll();
         channels.poll();
         logic.poll(events);
+        probe.poll_usb(events);
 
         uint32_t now = to_ms_since_boot(get_absolute_time());
         if (wifi_ok && now - last_led_ms >= 500) {

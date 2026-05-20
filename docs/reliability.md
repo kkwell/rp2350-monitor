@@ -32,7 +32,7 @@ compile time:
 - Logic analyzer upload chunk: `kLogicUploadChunkBytes = 512` bytes per JSON
   bulk line before hex expansion.
 - Logic analyzer burst marker storage remains in the metadata format, but
-  firmware `0.8.9` accepts only `burst_count:1`; multi-burst hardware timestamp
+  current firmware accepts only `burst_count:1`; multi-burst hardware timestamp
   support is reserved.
 
 ## Event Queues
@@ -192,9 +192,10 @@ features.
 
 ## Flash Recovery
 
-Firmware 0.8.9 removes CPU-side trigger scanning from the logic analyzer path
-and uses a ping-pong DMA pre-trigger ring, so USB CDC, Wi-Fi, HTTP, and
-reset-to-BOOTSEL servicing continue while an open-ended trigger is waiting.
+Firmware 0.8.9 and later remove CPU-side trigger scanning from the logic
+analyzer path and use a ping-pong DMA pre-trigger ring, so USB CDC, Wi-Fi,
+HTTP, CMSIS-DAP, and reset-to-BOOTSEL servicing continue while an open-ended
+trigger is waiting.
 If an older image has already stopped servicing the USB control path, automatic
 `picotool -f/-F` reboot may only report that the device was asked to reboot and
 then keep seeing the application-mode USB serial device. In that state, recover

@@ -13,19 +13,24 @@ transports.
 The minimum discovery surface is:
 
 - `hello`: returns firmware `version`, `board`, and available `links`
-- `status`: returns firmware, Wi-Fi, channel, buffer, and logic state
+- `status`: returns firmware, Wi-Fi, channel, buffer, logic, and probe state
 - `logic_caps`: returns analyzer ranges, limits, trigger modes, pulls, decoder
   capabilities, and compatibility flags
+- `probe_caps`: returns CMSIS-DAP/SWD debug probe capabilities and AI command
+  names
 - `pins`, `channels`, `events_read`: support UI ownership and telemetry views
 - USB CDC, Wi-Fi TCP port `4242`, setup AP recovery, and HTTP `/api/status`
 
-Host tools should verify `hello -> status -> logic_caps -> pins/channels`
-before enabling GPIO, UART, I2C, SPI, Wi-Fi, or logic-analyzer workflows.
+Host tools should verify
+`hello -> status -> logic_caps/probe_caps -> pins/channels` before enabling
+GPIO, UART, I2C, SPI, Wi-Fi, logic-analyzer, or debug-probe workflows.
 
 ## Transports
 
 - USB CDC serial: 115200 baud is used by the reference CLI, but the firmware
   accepts newline-delimited text from the USB stdio endpoint.
+- USB CMSIS-DAP v2 bulk: OpenOCD/GDB debug transport. This is independent from
+  the CDC JSONL control stream.
 - Wi-Fi TCP: connect to port `4242` on the Pico station IP or on the setup AP
   address `192.168.4.1`.
 - HTTP setup UI: port `80`, with machine-readable status at `GET /api/status`.
@@ -45,7 +50,7 @@ Command:
 Command response:
 
 ```json
-{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.8.9","board":"pico2_w","links":["wifi","usb"]}
+{"type":"resp","ok":true,"cmd":"hello","msg":"ready","version":"0.9.0","board":"pico2_w","links":["wifi","usb","cmsis-dap"]}
 ```
 
 Status event:
@@ -144,7 +149,7 @@ The response includes a `buffers` object with telemetry queue health:
 
 ```json
 {
-  "version": "0.8.9",
+  "version": "0.9.0",
   "board": "pico2_w",
   "buffers": {
     "event_capacity": 128,
@@ -216,6 +221,26 @@ capture engine:
     "buffer_words_max": 32768,
     "buffer_bytes": 131072,
     "chunk_bytes": 512
+  }
+}
+```
+
+The `status` response also includes a `probe` object for CMSIS-DAP/SWD state:
+
+```json
+{
+  "probe": {
+    "configured": true,
+    "active": false,
+    "claimed": false,
+    "pins": {"swclk": 2, "swdio": 3, "reset": 1},
+    "swclk_khz": 1000,
+    "reset_level": 1,
+    "dap_packets": 0,
+    "dap_errors": 0,
+    "port_setups": 0,
+    "port_setup_failures": 0,
+    "last_error": ""
   }
 }
 ```
@@ -614,6 +639,95 @@ python3 tools/rpmon_cli.py logic_export --input capture.jsonl --format csv --out
 - `spi`: SPI modes 0..3, optional CS, MOSI/MISO, MSB/LSB word assembly.
 - `i2c`: START/STOP, 7-bit address, R/W, data bytes, ACK/NACK.
 
+## CMSIS-DAP / SWD Debug Probe
+
+The debug probe exposes two host-facing paths:
+
+- USB CMSIS-DAP v2 bulk interface for OpenOCD/GDB.
+- JSONL `probe_*` commands over USB CDC or Wi-Fi TCP for AI/tooling control.
+
+Query probe capability:
+
+```json
+{"cmd":"probe_caps"}
+```
+
+Response:
+
+```json
+{
+  "type": "resp",
+  "ok": true,
+  "cmd": "probe_caps",
+  "probe_caps": {
+    "engine": "raspberrypi-debugprobe-pio-swd",
+    "source": "github.com/raspberrypi/debugprobe",
+    "cmsis_dap": true,
+    "cmsis_dap_version": "v2",
+    "usb_bulk": true,
+    "json_packet_bridge": true,
+    "swd": true,
+    "jtag": false,
+    "swo": false,
+    "runtime_pins": true,
+    "default_pins": {"swclk": 2, "swdio": 3, "reset": 1},
+    "swclk_khz_default": 1000,
+    "swclk_khz_max": 24000,
+    "openocd_transport": "cmsis-dap",
+    "ai_commands": ["probe_caps", "probe_status", "probe_config", "probe_release", "probe_reset", "probe_dap"]
+  }
+}
+```
+
+Configure SWD pins. `reset` may be `-1` if nRESET is not connected:
+
+```json
+{"cmd":"probe_config","swclk":2,"swdio":3,"reset":1,"swclk_khz":1000}
+```
+
+Read status:
+
+```json
+{"cmd":"probe_status"}
+```
+
+Pulse, assert, or release target reset:
+
+```json
+{"cmd":"probe_reset","action":"pulse","pulse_ms":50}
+{"cmd":"probe_reset","action":"assert"}
+{"cmd":"probe_reset","action":"release"}
+```
+
+Release SWD resources and pins:
+
+```json
+{"cmd":"probe_release"}
+```
+
+Send a raw CMSIS-DAP packet over the monitor JSONL channel:
+
+```json
+{"cmd":"probe_dap","packet_hex":"00f0"}
+```
+
+`probe_dap` response:
+
+```json
+{"type":"resp","ok":true,"cmd":"probe_dap","msg":"DAP packet processed","request_len":2,"response_len":3,"resp_hex":"00..."}
+```
+
+The packet bridge is intended for AI scripts and diagnostics. For normal
+programming/debugging, use OpenOCD against the USB CMSIS-DAP interface:
+
+```sh
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_config --swclk 2 --swdio 3 --reset 1 --swclk-khz 1000
+openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg
+```
+
+Target selection is an OpenOCD responsibility. The monitor firmware supplies
+the SWD transport and reset control; it does not embed target flash algorithms.
+
 ## CAN Reservation
 
 The command parser accepts `type:"can"` as a reserved protocol name, but the
@@ -650,6 +764,11 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_read --offset-words 0 --count
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_release
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 logic_capture --pin-base 16 --pin-count 4 --sample-rate 10000000 --samples 4096 --output capture.jsonl --release
 python3 tools/rpmon_cli.py logic_decode --input capture.jsonl --decoder summary
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_caps
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_config --swclk 2 --swdio 3 --reset 1 --swclk-khz 1000
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_reset --action pulse --pulse-ms 50
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_dap --hex 00f0
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_release
 ```
 
 External tools should follow the same rule: do not scrape human text; consume

@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout firmware
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install build dependencies
         run: |
@@ -29,6 +31,16 @@ jobs:
             ninja-build \
             pkg-config \
             python3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate host UI
+        run: |
+          cd ui
+          npm run validate
 
       - name: Checkout Pico SDK
         run: |

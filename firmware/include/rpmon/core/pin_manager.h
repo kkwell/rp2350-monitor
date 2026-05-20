@@ -19,7 +19,10 @@ enum class PinRole : uint8_t {
     CanTx,
     CanRx,
     Gpio,
-    Logic
+    Logic,
+    ProbeSwclk,
+    ProbeSwdio,
+    ProbeReset
 };
 
 class PinManager {

@@ -563,6 +563,9 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
         "logic_release",
         "logic_status",
         "logic_caps",
+        "probe_caps",
+        "probe_status",
+        "probe_release",
     }:
         return {"cmd": cmd}
     if cmd == "events_read":
@@ -693,6 +696,19 @@ def command_payload(args: argparse.Namespace) -> Dict[str, Any]:
         return payload
     if cmd == "logic_read":
         return {"cmd": "logic_read", "offset_words": args.offset_words, "count_words": args.count_words}
+    if cmd == "probe_config":
+        payload = {
+            "cmd": "probe_config",
+            "swclk": args.swclk,
+            "swdio": args.swdio,
+            "reset": args.reset,
+            "swclk_khz": args.swclk_khz,
+        }
+        return payload
+    if cmd == "probe_reset":
+        return {"cmd": "probe_reset", "action": args.action, "pulse_ms": args.pulse_ms}
+    if cmd == "probe_dap":
+        return {"cmd": "probe_dap", "packet_hex": args.hex}
     if cmd == "raw_json":
         return json.loads(args.payload)
     raise SystemExit(f"unsupported command: {cmd}")
@@ -713,7 +729,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log", help="Append received JSON lines to this JSONL file")
 
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ["hello", "status", "pins", "channels", "wifi_scan", "wifi_ap", "buffer_status"]:
+    for name in ["hello", "status", "pins", "channels", "wifi_scan", "wifi_ap", "buffer_status", "probe_caps", "probe_status", "probe_release"]:
         sub.add_parser(name)
 
     events_read = sub.add_parser("events_read")
@@ -822,6 +838,19 @@ def build_parser() -> argparse.ArgumentParser:
     logic_read = sub.add_parser("logic_read")
     logic_read.add_argument("--offset-words", type=int, default=0)
     logic_read.add_argument("--count-words", type=int, default=0)
+
+    probe_config = sub.add_parser("probe_config")
+    probe_config.add_argument("--swclk", type=int, default=2)
+    probe_config.add_argument("--swdio", type=int, default=3)
+    probe_config.add_argument("--reset", type=int, default=1, help="nRESET GPIO, or -1 to disable")
+    probe_config.add_argument("--swclk-khz", type=int, default=1000)
+
+    probe_reset = sub.add_parser("probe_reset")
+    probe_reset.add_argument("--action", choices=["pulse", "assert", "release"], default="pulse")
+    probe_reset.add_argument("--pulse-ms", type=int, default=50)
+
+    probe_dap = sub.add_parser("probe_dap")
+    probe_dap.add_argument("--hex", required=True, help="Raw CMSIS-DAP packet hex, up to 64 bytes")
 
     logic_capture = sub.add_parser("logic_capture")
     logic_capture.add_argument("--settings", help="JSON capture settings file")

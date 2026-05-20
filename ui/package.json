@@ -1,0 +1,14 @@
+{
+  "name": "@embed-labs/rp2350-monitor-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform RP2350 Monitor workbench for user and AI-driven hardware debugging.",
+  "type": "module",
+  "scripts": {
+    "validate": "node --check src/schema.js && node --check src/client.js && node --check src/main.js && node --check src/app.js",
+    "serve": "python3 -m http.server 5177",
+    "launch": "bin/embed-labs-logic-analyzer",
+    "launch:en": "bin/embed-labs-logic-analyzer --lang en",
+    "launch:tcp": "bin/embed-labs-logic-analyzer --tcp 192.168.4.1:4242"
+  }
+}

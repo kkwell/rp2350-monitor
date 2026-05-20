@@ -8,6 +8,8 @@ Current version:
 
 - Wi-Fi control/data channel on TCP port `4242`
 - USB CDC backup control/data channel
+- USB CMSIS-DAP v2 SWD debug probe path based on Raspberry Pi official
+  `debugprobe`, with OpenOCD/GDB support through the host
 - Pico-hosted setup AP: `RP2350-Monitor-xxxxxx`, password `rpmon2350`, IP `192.168.4.1`
 - Native UART, SPI, I2C, and GPIO channel layers
 - PIO2/DMA high-speed logic analyzer for contiguous GPIO capture
@@ -18,6 +20,8 @@ Current version:
 - Host-side logic analysis for UART, SPI, I2C, bursts, edges, timing summary, sample windows, CSV, and VCD
 - CAN reserved behind a driver interface
 - Host CLI that emits newline-delimited JSON for AI/tooling analysis
+- Browser-native host UI under `ui/` for logic analyzer, UART, I2C, SPI,
+  Wi-Fi, GPIO status, and AI-visible operation replay
 - Bounded global and per-channel event buffering with overflow counters and replay
 - GitHub Actions CI/release workflows for reproducible UF2 builds
 
@@ -30,20 +34,28 @@ not on a one-off single-purpose UF2. Host software discovers the board and
 enables UI/tool features through:
 
 - `hello` with firmware version, board id, and available links
-- `status` with Wi-Fi, channel, logic analyzer, and buffer state
+- `status` with Wi-Fi, channel, logic analyzer, debug probe, and buffer state
 - `logic_caps` for analyzer ranges, limits, triggers, pulls, and decoders
+- `probe_caps` for CMSIS-DAP/SWD probe capability discovery
 - `pins`, `channels`, `events_read`, USB CDC, Wi-Fi TCP `4242`, setup AP, and
   HTTP `GET /api/status`
 
 Any firmware change must preserve those discovery paths before adding or fixing
-GPIO, UART, I2C, SPI, Wi-Fi, or logic-analyzer behavior. The minimum regression
-order is `hello -> status -> logic_caps -> pins/channels -> target feature`.
+GPIO, UART, I2C, SPI, Wi-Fi, logic-analyzer, or debug-probe behavior. The
+minimum regression order is
+`hello -> status -> logic_caps/probe_caps -> pins/channels -> target feature`.
 If one of those discovery checks fails, the GUI and AI tools may not identify
 the hardware and the build is not releasable.
 
 ## Build
 
-The project defaults to the DBT-installed Pico SDK and Arm GNU Toolchain paths if `PICO_SDK_PATH` / `PICO_TOOLCHAIN_PATH` are not set.
+The project defaults to the DBT-installed Pico SDK and Arm GNU Toolchain paths
+if `PICO_SDK_PATH` / `PICO_TOOLCHAIN_PATH` are not set. The Raspberry Pi
+debugprobe source is tracked as a git submodule:
+
+```sh
+git submodule update --init --recursive
+```
 
 ```sh
 cmake -S . -B build -DPICO_BOARD=pico2_w
@@ -81,6 +93,32 @@ python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX status
 
 Pico 2 W Wi-Fi must use a 2.4 GHz network. If station connection fails, the firmware restores the setup AP and `status` reports `ap_ssid` and `ap_ip` for recovery.
 The firmware stores up to three Wi-Fi profiles. Failed saved-profile connection attempts are reported in `wifi.profiles[n].last_error`.
+
+## Host UI
+
+The monitor UI is part of this repository and is released together with the
+firmware. It is the canonical UI/bridge source for desktop packaging and AI
+debugging flows.
+
+```sh
+cd ui
+npm run validate
+bin/embed-labs-logic-analyzer --serial /dev/cu.usbmodemXXXX --panel logic --lang zh
+```
+
+The launcher serves the UI and bridge from this repository, then prints a local
+URL such as:
+
+```text
+http://127.0.0.1:5178/?api=http://127.0.0.1:5178/api/operation&panel=logic&lang=zh
+```
+
+Wi-Fi transport is also supported when the Pico is reachable on the same LAN:
+
+```sh
+cd ui
+bin/embed-labs-logic-analyzer --tcp 192.168.4.1:4242 --panel logic --lang zh
+```
 
 ## Channel Examples
 
@@ -148,6 +186,24 @@ python3 tools/rpmon_cli.py --tcp 192.168.4.1 start --id 5
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 gpio_read --id 5
 python3 tools/rpmon_cli.py --tcp 192.168.4.1 monitor
 ```
+
+CMSIS-DAP/SWD debug probe:
+
+```sh
+# Default probe pins are GP2=SWCLK, GP3=SWDIO, GP1=nRESET.
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_caps
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_config --swclk 2 --swdio 3 --reset 1 --swclk-khz 1000
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_reset --action pulse --pulse-ms 50
+python3 tools/rpmon_cli.py --serial /dev/tty.usbmodemXXXX probe_status
+
+# Then use the USB CMSIS-DAP interface from OpenOCD with the target MCU config.
+openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg
+```
+
+The monitor firmware supplies the CMSIS-DAP transport; OpenOCD supplies the
+target-specific flash algorithm and debug server. See
+[docs/debug_probe.md](docs/debug_probe.md) for pin rules, OpenOCD examples, and
+AI-facing `probe_*` command details.
 
 High-speed logic capture on GPIO16..GPIO19:
 
@@ -236,7 +292,7 @@ client isolation enabled or the host is not on a peer-visible LAN.
 
 Control messages are newline-delimited JSON. Responses and captured protocol events are also newline-delimited JSON, which keeps the host side easy to pipe into scripts or models.
 
-See [docs/control_protocol.md](docs/control_protocol.md) for the host control protocol, [docs/logic_analyzer.md](docs/logic_analyzer.md) for capture/decode workflow, [docs/resource_limits.md](docs/resource_limits.md) for concurrent hardware limits, [docs/reliability.md](docs/reliability.md) for buffering and failure handling, and [docs/architecture.md](docs/architecture.md) for the firmware layering and extension points.
+See [docs/control_protocol.md](docs/control_protocol.md) for the host control protocol, [docs/logic_analyzer.md](docs/logic_analyzer.md) for capture/decode workflow, [docs/debug_probe.md](docs/debug_probe.md) for CMSIS-DAP/SWD debugging, [docs/resource_limits.md](docs/resource_limits.md) for concurrent hardware limits, [docs/reliability.md](docs/reliability.md) for buffering and failure handling, and [docs/architecture.md](docs/architecture.md) for the firmware layering and extension points.
 
 ## Release Builds
 

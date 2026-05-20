@@ -1,6 +1,7 @@
 build/
 build-*/
 cmake-build-*/
+.DS_Store
 *.uf2
 *.elf
 *.bin
